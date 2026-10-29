@@ -16,6 +16,15 @@ Siguraduhing naka-install na mga to sa PC niyo:
 
 ---
 
+Connecting Frontend (`fibertec`) to Backend (`fibertec-api`)
+
+1. Siguraduhing tumatakbo ang backend server sa `http://localhost:3000`.
+2. Sa mga JavaScript file sa `fibertec/js/`, gamitin ang `fetch('http://localhost:3000/api/...')` para kumuha o magpasa ng data sa backend.
+3. Isama ang JWT Token sa `Authorization` header para sa mga protected routes:
+   `headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }`
+
+---
+
 Step 1: Clone the Repository
 Buksan niyo yung Terminal / Command Prompt at i-run to:
 
