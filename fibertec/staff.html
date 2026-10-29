@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>FiberTec - Staff Portal</title>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/jpeg" href="images/logo.jpeg">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Gudea:wght@700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/admin.css">
+</head>
+<body class="admin">
+<header class="topbar">
+  <img src="images/logo.jpeg" alt="FiberTec IT Solutions">
+  <div class="brand">Fiber<b>Tec</b> IT Solutions<small>Billing Management System</small></div>
+  <div class="right"><span class="avatar" id="staff-av">S</span><div class="who">Staff<small id="staff-who">Staff</small></div><button class="logout" onclick="logout()">Logout</button></div>
+</header>
+<div class="layout" id="layout">
+  <aside class="sidebar">
+    <nav class="side-nav">
+      <a id="nav-dash" class="active" title="Dashboard" onclick="showStaff('dash')"><img src="images/Home.png" alt=""><span class="label">Dashboard</span></a>
+      <a id="nav-clients" title="Clients" onclick="showStaff('clients')"><img src="images/Person.png" alt=""><span class="label">Clients</span></a>
+      <a id="nav-pay" title="Payments" onclick="showStaff('pay')"><img src="images/Wallet.png" alt=""><span class="label">Payments</span></a>
+    </nav>
+    <button class="toggle" onclick="toggleSidebar()" title="Collapse / expand sidebar"><img src="images/sidebar_slideicon.png" alt="Toggle sidebar"></button>
+  </aside>
+  <main class="main">
+
+    <!-- DASHBOARD -->
+    <section id="dash">
+      <h1>Dashboard Overview</h1>
+      <div class="st-tiles">
+        <div class="st-tile" style="background:#00417c"><b>To Verify</b><span id="t-verify">0</span></div>
+        <div class="st-tile" style="background:#5197d7"><b>Due Today</b><span id="t-due">0</span></div>
+        <div class="st-tile" style="background:#3167bd"><b>In Grace Period</b><span id="t-grace">0</span></div>
+        <div class="st-tile" style="background:#81c715"><b>Under Review</b><span id="t-review">0</span></div>
+        <div class="st-tile" style="background:#fd7b00"><b>Collected this month</b><span id="t-collected">&#8369;0.00</span></div>
+      </div>
+      <div class="st-cols">
+        <div>
+          <div class="dcard"><p class="sec">Payments to verify</p><div id="dash-queue"></div></div>
+          <div class="dcard"><p class="sec">Clients</p><div id="dash-clients"></div></div>
+        </div>
+        <div>
+          <div class="dcard"><p class="sec">Cancellation requests <span class="badge orange" style="min-width:0"><span id="req-count">0</span> pending</span></p><div id="dash-requests"></div></div>
+          <div class="dcard"><p class="sec">Recent activity</p><div id="activity"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CLIENTS (same filters as Admin; view only) -->
+    <section id="clients" class="hidden">
+      <div class="head"><h1>Clients</h1>
+        <button class="btn btn-reg" onclick="openRegister()">+ Register New Client</button>
+        <button class="btn btn-csv" onclick="exportClients()">Export CSV</button></div>
+      <div class="filters">
+        <input type="text" class="search" id="search" placeholder="Search Account No. or Client Name" oninput="onClientFilter()">
+        <select id="f-branch" onchange="onClientFilter()"></select><select id="f-plan" onchange="onClientFilter()"></select>
+      </div>
+      <div class="card-table">
+        <div class="tabs" id="client-tabs"></div>
+        <div class="tscroll"><table id="client-table"></table></div>
+        <div id="client-foot"></div>
+      </div>
+    </section>
+
+    <!-- PAYMENTS -->
+    <section id="pay" class="hidden">
+      <div class="dcard" style="margin-bottom:16px"><p class="st-title">Pending payment verification (<span id="pcount">0</span>)</p><div class="q-scroll" id="queue"></div></div>
+      <div class="st-pay">
+        <div class="dcard">
+          <p class="st-title">Recent payment records</p>
+          <div class="filters" style="margin-bottom:10px">
+            <input type="text" class="search" id="sr-search" placeholder="Search client or ref no." oninput="onSrFilter()" style="width:230px">
+            <select id="sr-method" onchange="onSrFilter()"></select><select id="sr-status" onchange="onSrFilter()"></select>
+          </div>
+          <div class="card-table" style="border-color:#c7d2e1"><div class="tscroll"><table id="staff-records"></table></div><div id="sr-foot"></div></div>
+        </div>
+        <div class="dcard">
+          <p class="st-title">Over-the-counter cash entry</p>
+          <label class="st-lbl">Client</label>
+          <div class="cash-find"><input type="text" class="search" id="cash-search" placeholder="Search Account No. or Client Name" autocomplete="off" oninput="cashSearch()" onfocus="cashSearch()" onblur="setTimeout(function(){$('cash-results').classList.add('hidden')},150)"><div id="cash-results" class="cash-results hidden"></div></div>
+          <div id="cash-picked" class="cash-picked hidden"></div><input type="hidden" id="cash-client">
+          <label class="st-lbl">Payment</label><select id="cash-type" class="st-sel"><option>Full payment</option><option>Partial payment</option></select>
+          <button class="st-btn" onclick="encodeCash()">Encode payment and issue O.R.</button>
+          <p class="st-note">Partial payment is only available on the statement&rsquo;s due date. The other half must be paid before the grace period ends. The official receipt number is created automatically.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+<script src="js/data.js"></script>
+<script src="js/common.js"></script>
+<script src="js/clients.js"></script>
+<script src="js/staff.js"></script>
+</body>
+</html>

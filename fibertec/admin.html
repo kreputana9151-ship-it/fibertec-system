@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>FiberTec - Admin Portal</title>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/jpeg" href="images/logo.jpeg">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Gudea:wght@700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/admin.css">
+</head>
+<body class="admin">
+<header class="topbar">
+  <img src="images/logo.jpeg" alt="FiberTec IT Solutions">
+  <div class="brand">Fiber<b>Tec</b> IT Solutions<small>Billing Management System</small></div>
+  <div class="right"><span class="avatar">RG</span><div class="who">Ramon Guerrero<small>Administrator</small></div><button class="logout" onclick="logout()">Logout</button></div>
+</header>
+<div class="layout" id="layout">
+  <aside class="sidebar">
+    <nav class="side-nav">
+      <a id="a-dash" class="active" title="Dashboard" onclick="showAdmin('dash')"><img src="images/Home.png" alt=""><span class="label">Dashboard</span></a>
+      <a id="a-clients" title="Clients" onclick="showAdmin('clients')"><img src="images/Person.png" alt=""><span class="label">Clients</span></a>
+      <a id="a-billing" title="Billing" onclick="showAdmin('billing')"><img src="images/Document.png" alt=""><span class="label">Billing</span></a>
+      <a id="a-pay" title="Payments" onclick="showAdmin('pay')"><img src="images/Wallet.png" alt=""><span class="label">Payments</span></a>
+      <a id="a-analytics" title="Branch Analytics" onclick="showAdmin('analytics')"><img src="images/Analytics.png" alt=""><span class="label">Branch Analytics</span></a>
+      <a id="a-email" title="Email &amp; Portal" onclick="showAdmin('email')"><img src="images/Doorbell.png" alt=""><span class="label">Email &amp; Portal</span></a>
+    </nav>
+    <button class="toggle" onclick="toggleSidebar()" title="Collapse / expand sidebar"><img src="images/sidebar_slideicon.png" alt="Toggle sidebar"></button>
+  </aside>
+  <main class="main">
+
+    <!-- DASHBOARD -->
+    <section id="dash">
+      <div class="dash-head"><h1>DASHBOARD</h1>
+        <select id="d-branch" onchange="renderDash()"></select><select id="d-month" onchange="renderDash()"></select></div>
+      <div class="stats" id="d-stats"></div>
+      <div class="row2">
+        <div class="dcard"><p class="sec">Branch performance overview</p><div id="branch-bars" class="tscroll"></div></div>
+        <div class="dcard"><p class="sec">Account Status</p>
+          <div class="donut" id="status-donut"><div id="donut-n"></div></div><div class="legend" id="status-legend"></div></div>
+      </div>
+      <div class="row3">
+        <div class="dcard">
+          <p class="sec">Collection Overview 
+            <span class="lg"><i class="dot" style="background:#3167bd"></i>Billed Amount <i class="dot" style="background:#2daea6"></i>Collected Amount</span>
+            <button class="expand-btn" onclick="expandCard(this)" title="Expand Card">⛶</button>
+          </p>
+          <div id="dash-chart"></div>
+        </div>
+        <div class="dcard"><p class="sec">Recent Payments <a onclick="showAdmin('pay')">View All &rarr;</a></p><div class="rp-scroll"><table class="rp" id="recent-pay"></table></div></div>
+      </div>
+    </section>
+
+    <!-- CLIENTS -->
+    <section id="clients" class="hidden">
+      <div class="head"><h1>CLIENTS RECORDS</h1>
+        <button class="btn btn-reg" onclick="openRegister()">+ Register New Client</button>
+        <button class="btn btn-csv" onclick="exportClients()">Export CSV</button></div>
+      <div class="filters">
+        <input type="text" class="search" id="search" placeholder="Search Account No. or Client Name" oninput="onClientFilter()">
+        <select id="f-branch" onchange="onClientFilter()"></select><select id="f-plan" onchange="onClientFilter()"></select>
+      </div>
+      <div class="card-table">
+        <div class="tabs" id="client-tabs"></div>
+        <div class="tscroll"><table id="client-table"></table></div>
+        <div id="client-foot"></div>
+      </div>
+    </section>
+
+    <!-- BILLING -->
+    <section id="billing" class="hidden">
+      <h1>BILLING MANAGEMENT</h1>
+      <div class="stats" id="b-stats"></div>
+      <div class="filters">
+        <input type="text" class="search" id="b-search" placeholder="Search Account No. or Client Name" oninput="onBillFilter()">
+        <select id="b-branch" onchange="onBillFilter()"></select><select id="b-status" onchange="onBillFilter()"></select><select id="b-month" onchange="onBillFilter()"></select>
+      </div>
+      <div class="split" id="bill-split">
+        <div class="card-table">
+          <p class="ct-title" id="bill-title"></p>
+          <div class="tscroll"><table id="billing-table"></table></div>
+          <div id="bill-foot"></div>
+        </div>
+        <div id="bill-panel" class="bill-panel"></div>
+      </div>
+    </section>
+
+    <!-- PAYMENTS -->
+    <section id="pay" class="hidden">
+      <h1>PAYMENT RECORDS</h1>
+      <div class="stats" id="p-stats"></div>
+      <div class="filters">
+        <input type="text" class="search" id="p-search" placeholder="Search Account No. or Client Name" oninput="onPayFilter()">
+        <select id="p-branch" onchange="onPayFilter()"></select><select id="p-method" onchange="onPayFilter()"></select><select id="p-month" onchange="onPayFilter()"></select><select id="p-status" onchange="onPayFilter()"></select>
+      </div>
+      <div class="card-table"><div class="tscroll"><table id="pay-table"></table></div><div id="pay-foot"></div></div>
+    </section>
+
+    <!-- BRANCH ANALYTICS -->
+    <section id="analytics" class="hidden">
+      <div class="dash-head"><h1>BRANCH ANALYTICS</h1>
+        <select id="a-branch" onchange="renderAnalytics()"></select><select id="a-month" onchange="renderAnalytics()"></select></div>
+      <div class="stats" id="an-stats"></div>
+      <div class="row2" style="grid-template-columns:1fr 380px">
+        <div class="dcard">
+          <p class="sec">Branch Comparison: Billed vs Collected 
+            <span class="lg"><i class="dot" style="background:#3167bd"></i>Billed <i class="dot" style="background:#2daea6"></i>Collected</span>
+            <button class="expand-btn" onclick="expandCard(this)" title="Expand Card">⛶</button>
+          </p>
+          <div id="an-chart"></div>
+        </div>
+        <div class="dcard">
+          <p class="sec">Fiber Tier Plan Distribution
+            <button class="expand-btn" onclick="expandCard(this)" title="Expand Card">⛶</button>
+          </p>
+          <div class="donut" id="plan-donut"><div id="plan-n"></div></div>
+          <div class="legend" id="plan-legend"></div>
+        </div>
+      </div>
+      <p class="sub-sec">Subscriber Growth &amp; Churn Analytics</p>
+      <div class="row2" style="grid-template-columns:1fr 1fr">
+        <div class="dcard">
+          <p class="sec" style="font-size:16px">New Client Registrations
+            <button class="expand-btn" onclick="expandCard(this)" title="Expand Card">⛶</button>
+          </p>
+          <div id="reg-chart"></div>
+        </div>
+        <div class="dcard">
+          <p class="sec" style="font-size:16px">Monthly Cancellation Rate
+            <button class="expand-btn" onclick="expandCard(this)" title="Expand Card">⛶</button>
+          </p>
+          <div id="churn-chart"></div>
+        </div>
+      </div>
+      <div class="row2" style="grid-template-columns:1fr 1fr">
+        <div class="dcard">
+          <p class="sec">ANOVA: revenue per client by branch
+            <button class="expand-btn" onclick="expandCard(this)" title="Expand Card">⛶</button>
+          </p>
+          <div id="anova"></div>
+        </div>
+        <div class="dcard">
+          <p class="sec">Markov Chain: churn
+            <button class="expand-btn" onclick="expandCard(this)" title="Expand Card">⛶</button>
+          </p>
+          <div id="markov"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- EMAIL & PORTAL -->
+    <section id="email" class="hidden">
+      <h1>EMAIL &amp; PORTAL NOTIFICATIONS</h1>
+      <div class="stats" id="n-stats"></div>
+      <div class="filters">
+        <input type="text" class="search" id="n-search" placeholder="Search Account No. or Client Name" oninput="onNoticeFilter()">
+        <select id="n-branch" onchange="onNoticeFilter()"></select><select id="n-type" onchange="onNoticeFilter()"></select><select id="n-status" onchange="onNoticeFilter()"></select>
+      </div>
+      <div class="card-table"><div class="tabs" id="notif-tabs"></div><div class="tscroll"><table id="email-table"></table></div><div id="notice-foot"></div></div>
+    </section>
+
+  </main>
+</div>
+<script src="js/data.js"></script>
+<script src="js/common.js"></script>
+<script src="js/clients.js"></script>
+<script src="js/admin.js"></script>
+</body>
+</html>
