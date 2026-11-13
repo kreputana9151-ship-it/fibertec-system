@@ -1,13 +1,18 @@
 /* FiberTec - Staff portal (branch-scoped). Staff can verify payments and approve/reject cancellation requests,
    but cannot terminate or reactivate accounts (admin only). */
 var STAFF_PAGES = ["dash", "clients", "pay"];
-function showStaff(id) { showSection(STAFF_PAGES, id, "nav-"); hideTip(); ({ dash: renderStaff, clients: renderClients, pay: renderStaff })[id](); }
+function showStaff(id) {
+  showSection(STAFF_PAGES, id, "nav-");
+  hideTip();
+  if (id == "dash" || id == "pay") refreshPayments();
+  ({ dash: renderStaff, clients: renderClients, pay: renderStaff })[id]();
+}
 function myClients() { return clients.filter(function (c) { return c.branch == STAFF_BRANCH; }); }
 function myRequests(status) { return requests.filter(function (r) { return r.branch == STAFF_BRANCH && r.status == status; }); }
 function onClientsChanged() { renderStaff(); }
 
 function renderStaff() {
-  var mine = myClients(), cnt = statusCounts(mine), pend = PAY.queue, mc = 0;
+  var mine = myClients(), cnt = statusCounts(mine), pend = PAY.queue;
   var due = mine.filter(function (c) { return inBilling(c) && c.dueISO == APP_TODAY && c.balance > 0; }).length;
   $("t-verify").innerHTML = pend.length; $("t-due").innerHTML = due; $("t-grace").innerHTML = cnt["Grace Period"]; $("t-review").innerHTML = cnt["Under Review"];
   $("t-collected").innerHTML = peso(collectedThisMonth());

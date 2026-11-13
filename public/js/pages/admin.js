@@ -6,6 +6,46 @@ function showAdmin(id) { showSection(ADMIN_PAGES, id, "a-"); hideTip(); ({ dash:
 function pct(a, b) { return b ? Math.round(a / b * 1000) / 10 : 0; }
 function branchScope(id) { var b = val(id); return b ? [b] : branchNames(); }
 
+/* ---------- PDF Statement Export ---------- */
+function downloadStatementPDF(accountNo, monthKey) {
+  var c = clientByNo(accountNo);
+  if (!c) { toast("Client record not found."); return; }
+  var m = monthKey || val("b-month") || "2026-10";
+  var s = statement(c, m);
+  var end = addDays(s.due, 30);
+  var w = window.open("", "_blank", "width=820,height=920");
+  if (!w) { toast("Please allow pop-ups to download the PDF statement."); return; }
+  var payRows = s.recs.filter(function (r) { return r.status != "Rejected"; }).map(function (r) {
+    return "<tr><td>" + fmtD(r.date, 1) + "</td><td>" + esc(r.method) + "</td><td>" + esc(r.ref ? fmtRef(r.ref) : "-") + "</td><td>" + esc(r.or || "-") + "</td><td style='text-align:right'>" + peso(r.amount) + "</td></tr>";
+  }).join("") || "<tr><td colspan='5' style='color:#777;font-style:italic'>No payments recorded for this statement.</td></tr>";
+
+  w.document.write(
+    "<!DOCTYPE html><html><head><title>" + esc(s.inv) + " - FiberTec Statement</title>" +
+    "<style>body{font-family:Arial,sans-serif;color:#1b2a4a;padding:36px;max-width:740px;margin:auto}" +
+    ".top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #013f70;padding-bottom:14px}" +
+    ".top h1{margin:0;color:#013f70;font-size:22px}.tag{font-size:12px;letter-spacing:1.5px;color:#5197d7;font-weight:bold}" +
+    ".grid{display:flex;justify-content:space-between;margin:20px 0;font-size:13px;line-height:1.6}" +
+    ".sum{display:flex;gap:24px;background:#f4f7fb;padding:12px 16px;border-radius:8px;margin-bottom:20px}" +
+    ".sum div{flex:1}.sum small{display:block;color:#666;font-size:11px;text-transform:uppercase}.sum b{font-size:15px;color:#013f70}" +
+    "table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:18px}" +
+    "th{text-align:left;background:#013f70;color:#fff;padding:8px 10px;font-size:11px;letter-spacing:.5px}" +
+    "td{padding:8px 10px;border-bottom:1px solid #e2e8f0}" +
+    ".tot{display:flex;justify-content:space-between;font-size:16px;font-weight:bold;border-top:2px solid #013f70;padding-top:10px;color:#013f70}" +
+    "@media print{body{padding:12px}}</style></head><body>" +
+    "<div class='top'><div><h1>FiberTec IT Solutions</h1><div class='tag'>E - STATEMENT</div></div>" +
+    "<div style='text-align:right'><strong style='font-size:16px'>" + esc(s.inv) + "</strong><br><small>Issued " + fmtD(s.bill) + "</small></div></div>" +
+    "<div class='sum'><div><small>Payment Status</small><b>" + esc(s.pay) + "</b></div><div><small>Due Date</small><b>" + fmtD(s.due, 1) + "</b></div><div><small>Total Amount Due</small><b>" + peso(s.balance) + "</b></div></div>" +
+    "<div class='grid'><div><strong>BILL TO</strong><br><b>" + esc(c.name.toUpperCase()) + "</b><br>" + esc(c.address) + "<br>" + esc(c.email) + "</div>" +
+    "<div style='text-align:right'><strong>ACCOUNT DETAILS</strong><br>" + esc(acctLabel(c)) + " (" + esc(c.no) + ")<br>" + esc(c.branch.toUpperCase()) + " BRANCH<br>Status: " + esc(c.status) + "</div></div>" +
+    "<table><thead><tr><th>DESCRIPTION</th><th>BILLING PERIOD</th><th style='text-align:right'>AMOUNT</th></tr></thead><tbody>" +
+    "<tr><td>" + esc(c.plan.toUpperCase()) + "</td><td>" + fmtD(s.due, 1) + " - " + fmtD(end, 1) + ", " + m.slice(0, 4) + "</td><td style='text-align:right'>" + peso(s.amount) + "</td></tr></tbody></table>" +
+    "<table><thead><tr><th>DATE</th><th>METHOD</th><th>REF NO.</th><th>O.R. NO.</th><th style='text-align:right'>PAID</th></tr></thead><tbody>" + payRows + "</tbody></table>" +
+    "<div class='tot'><span>Total Amount Due</span><span>" + peso(s.balance) + "</span></div>" +
+    "<script>window.onload=function(){window.print();};</script></body></html>"
+  );
+  w.document.close();
+}
+
 /* ---------- Dashboard ---------- */
 function renderDash() {
   var b = val("d-branch"), m = val("d-month") || "2026-10", cl = clients.filter(function (c) { return !b || c.branch == b; }), cnt = statusCounts(cl);
@@ -60,7 +100,7 @@ function closeBill() { BILL.sel = null; renderBilling(); }
 function renderBillPanel() {
   var p = $("bill-panel"), c = BILL.sel && clientByNo(BILL.sel), m = val("b-month") || "2026-10";
   $("bill-split").classList.toggle("open", !!c); if (!c) { p.innerHTML = ""; return; }
-  var s = statement(c, m), hist = "", periods = MONTHS.filter(function (x) { return hasStatement(c, x.k) || (x.k == "2026-10" && inBilling(c)); });
+  var s = statement(c, m), hist = "";
   MONTHS.forEach(function (x) { if (!hasStatement(c, x.k)) return; var h = statement(c, x.k); hist += "<tr class='" + (x.k == m ? "cur" : "") + "'><td>" + monShort(x.k) + "</td><td>" + h.inv + "</td><td>" + peso(h.amount) + "</td><td>" + peso(h.paid) + "</td><td>" + badgeFor(h.pay) + "</td><td>" + badgeFor(h.send) + "</td></tr>"; });
   var payRows = s.recs.length ? s.recs.map(function (r) { return "<tr><td>" + fmtD(r.date, 1) + "</td><td>" + r.method + "</td><td>" + (r.ref ? fmtRef(r.ref) : "") + "</td><td>" + esc(r.or || "") + "</td><td>" + peso(r.amount) + "</td><td>" + badgeFor(r.status) + "</td></tr>"; }).join("") : "<tr><td colspan='6' style='color:#888;font-style:italic'>No payments recorded for this statement yet.</td></tr>";
   var canSend = m == "2026-10" && s.send != "Delivered";
@@ -72,7 +112,7 @@ function renderBillPanel() {
     "<div class='h'><span>PAID</span><span style='color:#000;font-size:13.5px;font-weight:500;letter-spacing:0'>" + peso(s.paid) + "</span></div><hr style='margin-top:10px'><div class='tot'><span>Total amount due</span><span>" + peso(s.balance) + "</span></div></div>" +
     "<div class='bpn-h'>Payments for this statement</div><table class='bpn-tbl'><thead><tr><th>Date</th><th>Method</th><th>Ref No.</th><th>O.R. No.</th><th>Amount</th><th>Status</th></tr></thead><tbody>" + payRows + "</tbody></table>" +
     "<div class='bpn-h'>Billing history</div><table class='bpn-tbl'><thead><tr><th>Period</th><th>Invoice</th><th>Amount</th><th>Paid</th><th>Payment Status</th><th>Status</th></tr></thead><tbody>" + hist + "</tbody></table>" +
-    "<div class='bpn-actions'>" + (canSend ? "<button class='btn btn-blue' onclick='sendStatement(\"" + c.no + "\")'>" + (s.send == "Failed" ? "Resend statement" : "Send statement now") + "</button>" : "") + "<button class='btn btn-light' onclick='toast(\"Statement " + s.inv + " downloaded (demo)\")'>Download PDF</button><button class='btn btn-light' onclick='viewClient(\"" + c.no + "\")'>View client</button></div></div>";
+    "<div class='bpn-actions'>" + (canSend ? "<button class='btn btn-blue' onclick='sendStatement(\"" + c.no + "\")'>" + (s.send == "Failed" ? "Resend statement" : "Send statement now") + "</button>" : "") + "<button class='btn btn-light' onclick='downloadStatementPDF(\"" + c.no + "\",\"" + m + "\")'>Download PDF</button><button class='btn btn-light' onclick='viewClient(\"" + c.no + "\")'>View client</button></div></div>";
 }
 function sendStatement(no) { setClient(no, { bill: "Delivered" }); toast("Statement delivered to " + clientByNo(no).name + "."); renderBilling(); }
 

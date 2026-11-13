@@ -24,6 +24,49 @@ function showPage(id) {
 }
 function toggleBell() { $("bell").classList.toggle("hidden"); }
 
+/* ---------- PDF Statement Export ---------- */
+function downloadClientStatementPDF(monthKey) {
+  var m = monthKey || selM || "2026-10";
+  var s = statement(ME, m);
+  var lbl = stmtStatus(s);
+  var end = addDays(s.due, 30);
+  var recs = s.recs.filter(function (r) { return r.status != "Rejected"; });
+  var w = window.open("", "_blank", "width=820,height=920");
+  if (!w) { toast("Please allow pop-ups to download the PDF statement."); return; }
+
+  var payRows = recs.length
+    ? recs.map(function (r) {
+        return "<tr><td>" + fmtD(r.date, 1) + "</td><td>" + esc(r.method) + "</td><td>" + esc(r.ref ? fmtRef(r.ref) : "-") + "</td><td>" + esc(r.or || "-") + "</td><td>" + (r.status == "Verified" ? "Verified" : "Awaiting verification") + "</td><td style='text-align:right'>" + peso(r.amount) + "</td></tr>";
+      }).join("")
+    : "<tr><td colspan='6' style='color:#777;font-style:italic'>No payments recorded for this statement yet.</td></tr>";
+
+  w.document.write(
+    "<!DOCTYPE html><html><head><title>" + esc(s.inv) + " - FiberTec E-Statement</title>" +
+    "<style>body{font-family:Arial,sans-serif;color:#1b2a4a;padding:36px;max-width:740px;margin:auto}" +
+    ".top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #013f70;padding-bottom:14px}" +
+    ".top h1{margin:0;color:#013f70;font-size:22px}.tag{font-size:12px;letter-spacing:1.5px;color:#5197d7;font-weight:bold}" +
+    ".sum{display:flex;gap:24px;background:#f4f7fb;padding:12px 16px;border-radius:8px;margin:18px 0}" +
+    ".sum div{flex:1}.sum small{display:block;color:#666;font-size:11px;text-transform:uppercase}.sum b{font-size:15px;color:#013f70}" +
+    ".grid{display:flex;justify-content:space-between;margin:18px 0;font-size:13px;line-height:1.6}" +
+    "table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:18px}" +
+    "th{text-align:left;background:#013f70;color:#fff;padding:8px 10px;font-size:11px;letter-spacing:.5px}" +
+    "td{padding:8px 10px;border-bottom:1px solid #e2e8f0}" +
+    ".tot{display:flex;justify-content:space-between;font-size:16px;font-weight:bold;border-top:2px solid #013f70;padding-top:10px;color:#013f70}" +
+    "@media print{body{padding:12px}}</style></head><body>" +
+    "<div class='top'><div><h1>FiberTec IT Solutions</h1><div class='tag'>E - STATEMENT</div></div>" +
+    "<div style='text-align:right'><strong style='font-size:16px'>" + esc(s.inv) + "</strong><br><small>Issued " + fmtD(s.bill) + "</small></div></div>" +
+    "<div class='sum'><div><small>Status</small><b>" + esc(lbl) + "</b></div><div><small>Due Date</small><b>" + fmtD(s.due, 1) + "</b></div><div><small>Amount Due</small><b>" + peso(s.balance) + "</b></div></div>" +
+    "<div class='grid'><div><strong>BILL TO</strong><br><b>" + esc(ME.name.toUpperCase()) + "</b><br>" + esc(ME.address) + "<br>" + esc(ME.email) + "</div>" +
+    "<div style='text-align:right'><strong>ACCOUNT</strong><br>" + esc(acctLabel(ME)) + " (" + esc(ME.no) + ")<br>" + esc(ME.branch.toUpperCase()) + " BRANCH</div></div>" +
+    "<table><thead><tr><th>DESCRIPTION</th><th>BILLING PERIOD</th><th style='text-align:right'>AMOUNT</th></tr></thead><tbody>" +
+    "<tr><td>" + esc(ME.plan.toUpperCase()) + "</td><td>" + fmtD(s.due, 1).toUpperCase() + " - " + fmtD(end, 1).toUpperCase() + ", " + end.slice(0, 4) + "</td><td style='text-align:right'>" + peso(s.amount) + "</td></tr></tbody></table>" +
+    "<table><thead><tr><th>DATE</th><th>METHOD</th><th>REF NO.</th><th>O.R. NO.</th><th>STATUS</th><th style='text-align:right'>AMOUNT</th></tr></thead><tbody>" + payRows + "</tbody></table>" +
+    "<div class='tot'><span>Total amount due</span><span>" + peso(s.balance) + "</span></div>" +
+    "<script>window.onload=function(){window.print();};</script></body></html>"
+  );
+  w.document.close();
+}
+
 /* cancellation banner + button state */
 function cancelState() {
   var r = myCancelRequest(ME.no);
@@ -62,9 +105,36 @@ function cancelPay() { $("ref").value = ""; $("referr").innerHTML = ""; $("payty
 function submitPayment() {
   var ref = val("ref").replace(/\s/g, ""), t = val("paytype"), s = cur();
   if (!/^[0-9]{13}$/.test(ref)) { $("referr").innerHTML = "Reference number must be exactly 13 digits."; return; }
-  addRecord({ acc: ME.no, name: ME.name, branch: ME.branch, amount: t == "partial" ? Math.min(ME.rate / 2, s.balance) : s.balance, method: "GCash", ref: ref, status: "Pending", type: t == "partial" ? "Partial payment" : "Full payment" });
-  logActivity(ME.branch, "New GCash payment from " + ME.name + " (Ref " + fmtRef(ref) + ") waiting for verification.");
-  cancelPay(); renderClient(); toast("Payment submitted. Branch staff will verify it shortly.");
+  var amt = t == "partial" ? Math.min(ME.rate / 2, s.balance) : s.balance;
+  var pType = t == "partial" ? "Partial payment" : "Full payment";
+
+  function finishLocalPay() {
+    addRecord({ acc: ME.no, name: ME.name, branch: ME.branch, amount: amt, method: "GCash", ref: ref, status: "Pending", type: pType });
+    logActivity(ME.branch, "New GCash payment from " + ME.name + " (Ref " + fmtRef(ref) + ") waiting for verification.");
+    cancelPay();
+    renderClient();
+    toast("Payment submitted. Branch staff will verify it shortly.");
+  }
+
+  if (typeof apiCall == "function" && sessionStorage.getItem("fiberToken")) {
+    apiCall("POST", "/api/client/payments", {
+      amount: amt,
+      method: "GCash",
+      referenceNo: ref,
+      paymentType: pType
+    }).then(function () {
+      finishLocalPay();
+    }).catch(function (e) {
+      if (e && e.status == 401) return;
+      if (e && e.status == 400) {
+        $("referr").innerHTML = esc(e.message || "Invalid payment details.");
+        return;
+      }
+      finishLocalPay();
+    });
+  } else {
+    finishLocalPay();
+  }
 }
 
 /* ---------- Statements ---------- */
@@ -85,7 +155,7 @@ function renderStatements() {
     "<div class='est-h'><span>DESCRIPTION</span><span>AMOUNT</span></div><hr><div class='est-ln'><span>" + ME.plan.toUpperCase() + "<small>" + fmtD(s.due, 1).toUpperCase() + " - " + fmtD(end, 1).toUpperCase() + ", " + end.slice(0, 4) + "</small></span><span>" + peso(s.amount) + "</span></div>" +
     "<div class='est-h'><span>PAYMENTS RECEIVED</span><span>" + peso(s.paid) + "</span></div><hr class='l'>" + pays + "<hr>" +
     "<div class='est-ln est-tot'><span>Total amount due</span><span>" + peso(s.balance) + "</span></div>" +
-    "<div class='est-acts'>" + (selM == "2026-10" && canPayNow() ? "<button class='c-btn' onclick='showPage(\"payment\")'>Pay now</button>" : "") + "<button class='c-btn' style='background:#fff;color:#013f70;border:1px solid #013f70' onclick='toast(\"Statement " + s.inv + " downloaded (demo)\")'>Download PDF</button>" + (selM == "2026-10" ? cancelBtn() : "") + "</div></div>";
+    "<div class='est-acts'>" + (selM == "2026-10" && canPayNow() ? "<button class='c-btn' onclick='showPage(\"payment\")'>Pay now</button>" : "") + "<button class='c-btn' style='background:#fff;color:#013f70;border:1px solid #013f70' onclick='downloadClientStatementPDF(\"" + selM + "\")'>Download PDF</button>" + (selM == "2026-10" ? cancelBtn() : "") + "</div></div>";
 }
 
 /* ---------- Cancellation request ---------- */
@@ -96,11 +166,21 @@ function requestCancel() {
     "<div class='dlg-foot'><button class='btn btn-light' onclick='closeModal()'>No, keep my connection</button><button class='btn btn-red' onclick='confirmCancel()'>Yes, cancel my connection</button></div></div>", "sm");
 }
 function finalizeCancel() {
-  submitCancelRequest(ME, val("cx-reason"));
-  logActivity(ME.branch, "Cancellation request received from " + ME.name + " (" + ME.no + ").");
-  closeModal();
-  renderClient();
-  toast("Cancellation request sent to your branch staff.");
+  var reason = val("cx-reason");
+  function doneLocal() {
+    submitCancelRequest(ME, reason);
+    logActivity(ME.branch, "Cancellation request received from " + ME.name + " (" + ME.no + ").");
+    closeModal();
+    renderClient();
+    toast("Cancellation request sent to your branch staff.");
+  }
+  if (typeof apiCall == "function" && sessionStorage.getItem("fiberToken")) {
+    apiCall("POST", "/api/client/cancellations", { reason: reason })
+      .then(function () { doneLocal(); })
+      .catch(function (e) { if (!e || e.status != 401) doneLocal(); });
+  } else {
+    doneLocal();
+  }
 }
 function confirmCancel() {
   var pw = val("cx-pw");
