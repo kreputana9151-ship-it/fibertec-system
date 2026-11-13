@@ -1,4 +1,4 @@
-/* FiberTec - Client portal (everything is derived from the shared dummy data) */
+/* FiberTec - Client portal */
 var ME = null, CPAGES = ["home", "payment", "statement", "notifications"], selM = "2026-10";
 function stmtMonths() { return MONTHS.filter(function (m) { return hasStatement(ME, m.k); }); }
 function cur() { return statement(ME, "2026-10"); }
@@ -95,9 +95,35 @@ function requestCancel() {
     "<label>Enter your password to confirm</label><input type='password' id='cx-pw' autocomplete='current-password'><p class='error' id='cx-err'></p>" +
     "<div class='dlg-foot'><button class='btn btn-light' onclick='closeModal()'>No, keep my connection</button><button class='btn btn-red' onclick='confirmCancel()'>Yes, cancel my connection</button></div></div>", "sm");
 }
+function finalizeCancel() {
+  submitCancelRequest(ME, val("cx-reason"));
+  logActivity(ME.branch, "Cancellation request received from " + ME.name + " (" + ME.no + ").");
+  closeModal();
+  renderClient();
+  toast("Cancellation request sent to your branch staff.");
+}
 function confirmCancel() {
-  var pw = val("cx-pw"); if (!pw || pw != sessionStorage.getItem("fiberPw")) { $("cx-err").innerHTML = "Incorrect password. Cancellation was not submitted."; return; }
-  submitCancelRequest(ME, val("cx-reason")); logActivity(ME.branch, "Cancellation request received from " + ME.name + " (" + ME.no + ")."); closeModal(); renderClient(); toast("Cancellation request sent to your branch staff.");
+  var pw = val("cx-pw");
+  if (!pw) { $("cx-err").innerHTML = "Incorrect password. Cancellation was not submitted."; return; }
+  var storedPw = sessionStorage.getItem("fiberPw");
+  if (storedPw) {
+    if (pw != storedPw) { $("cx-err").innerHTML = "Incorrect password. Cancellation was not submitted."; return; }
+    finalizeCancel();
+    return;
+  }
+  fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ identifier: ME.no, username: ME.no, account_no: ME.no, password: pw })
+  })
+    .then(function (res) {
+      if (!res.ok) throw new Error("Invalid password");
+      sessionStorage.setItem("fiberPw", pw);
+      finalizeCancel();
+    })
+    .catch(function () {
+      $("cx-err").innerHTML = "Incorrect password. Cancellation was not submitted.";
+    });
 }
 
 /* ---------- Notifications ---------- */
