@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>FiberTec - Client Portal</title>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/jpeg" href="images/brand/logo.jpeg">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Gudea:wght@700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/pages/client.css">
+</head>
+<body class="client">
+<header class="topbar">
+  <img src="images/brand/logo.jpeg" alt="FiberTec IT Solutions">
+  <nav>
+    <a id="nav-home" class="on" onclick="showPage('home')">Home</a>
+    <a id="nav-payment" onclick="showPage('payment')">Payments</a>
+    <a id="nav-statement" onclick="showPage('statement')">Statements</a>
+  </nav>
+  <div class="right">
+    <button class="ic" onclick="toggleBell()" title="Notifications"><img src="images/icons/bell.png" alt="Notifications"><i class="dot-n"></i></button>
+    <span class="avatar" id="c-av"></span><div class="who"><span id="c-name"></span><small>Client</small></div>
+    <button class="logout" onclick="logout()">Logout</button>
+  </div>
+</header>
+
+<div class="c-dd hidden" id="bell">
+  <h3>Notifications</h3><div class="c-dd-list" id="dd-list"></div>
+  <div class="c-dd-foot" onclick="showPage('notifications')">See all</div>
+</div>
+
+<div class="c-wrap">
+  <div id="c-banner"></div>
+
+  <!-- HOME -->
+  <section id="home">
+    <div class="c-row4" id="c-cards"></div>
+    <div class="c-row2">
+      <div class="c-card c-acct" id="c-acct"></div>
+      <div class="c-card"><p class="c-lab">RECENT PAYMENTS</p><div class="c-recent" id="recent"></div></div>
+    </div>
+  </section>
+
+  <!-- PAYMENT -->
+  <section id="payment" class="hidden">
+    <div class="c-two">
+      <div class="c-card c-hist"><p class="c-lab16">PAYMENT HISTORY</p><div id="history"></div></div>
+      <div class="c-card c-form">
+        <p class="c-lab16">PAYMENT FORM</p>
+        <p class="c-lab16 c-step">STEP 1 &nbsp;&nbsp; CHOOSE PAYMENT</p>
+        <div class="c-step1">
+          <span class="c-pill" id="p-pill" style="float:right">Due today</span>
+          <b class="c-20" id="p-acct"></b>
+          <p class="c-due" id="p-due"></p>
+          <p class="muted" id="p-blocked" style="margin:0 0 8px"></p>
+          <select id="paytype" onchange="updatePay()"><option value="">Select payment</option><option value="full">Full payment</option><option value="partial">Partial payment</option></select>
+        </div>
+        <div id="steps23" class="hidden">
+          <p class="c-lab16 c-step">STEP 2 &nbsp;&nbsp; HOW TO PAY</p>
+          <div class="c-pay"><b>GCash number</b><b>0900 000 0000</b><b>Account name</b><b>F**ER*EC IT S.</b><b>Amount</b><b id="payamt"></b><b>Paying cash instead</b><span>Pay at <span id="p-branch" style="opacity:1"></span> branch. Staff will encode it and give you an official receipt</span></div>
+          <p class="c-lab16 c-step">STEP 3 &nbsp;&nbsp; INPUT YOUR GCASH REFERENCE NUMBER</p>
+          <p class="c-partial hidden" id="partialnote">After staff verify your half. Once your account is in the grace period, the full amount is required.</p>
+          <input type="text" id="ref" class="c-ref" maxlength="13" placeholder="13 digits from your GCash receipt">
+          <p class="error" id="referr"></p>
+          <div class="c-actions"><button class="c-sbm" onclick="submitPayment()">SUBMIT</button><button class="c-cnl" onclick="cancelPay()">CANCEL</button></div>
+        </div>
+        <div class="c-info">Pay in your own GCash app. This system only records payments. It never holds or moves your money. Once staff verify a payment, an official receipt (O.R.) is issued for it.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- STATEMENT -->
+  <section id="statement" class="hidden">
+    <div class="c-two" style="grid-template-columns:1fr 1.1fr">
+      <div class="c-card c-stl"><p class="c-lab">BILLING STATEMENTS</p><table id="stmt-table"></table></div>
+      <div class="c-card c-est" id="estmt"></div>
+    </div>
+  </section>
+
+  <!-- NOTIFICATIONS -->
+  <section id="notifications" class="hidden">
+    <h1 class="c-welcome" id="c-welcome"></h1><h2 class="c-nt">Notifications</h2>
+    <div class="c-notif"><div class="c-nlist" id="n-list"></div><div class="c-nview" id="n-view"></div></div>
+  </section>
+</div>
+<script src="js/core/data.js"></script>
+<script src="js/core/pwtoggle.js"></script>
+<script src="js/core/common.js"></script>
+<script src="js/pages/client.js"></script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>FiberTec - Log in</title>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/jpeg" href="images/brand/logo.jpeg">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/pages/login.css">
+</head>
+<body class="login-page">
+<div class="lg">
+  <div class="lg-left">
+    <img src="images/brand/logo.jpeg" alt="FiberTec IT Solutions" class="lg-logo">
+    <h1>Welcome to FiberTec.</h1>
+    <p>Fast and Reliable Internet Services for your personal and business needs</p>
+  </div>
+  <div class="lg-right">
+    <form class="lg-form" id="login-form" onsubmit="login();return false;">
+      <h2>Log in</h2>
+      <p class="lg-sub">Clients: account number or email &nbsp;|&nbsp; Staff: branch name &nbsp;|&nbsp; Owner: username</p>
+      <label>Account number, email, or username</label>
+      <input type="text" id="account" autocomplete="username">
+      <label>Password</label>
+      <input type="password" id="password" autocomplete="current-password">
+      <p class="error" id="error"></p>
+      <button type="submit" class="lg-btn">Log In</button>
+      <a class="lg-reset lg-forgot" href="forgot-password.html">Forgot password?</a>
+    </form>
+    <form class="lg-form hidden" id="cp-form" onsubmit="changeFirstPassword();return false;">
+      <h2>Set a new password</h2>
+      <p class="lg-sub">Your password was reset by the owner. Please choose your own.</p>
+      <label>New password</label>
+      <input type="password" id="cp-new" autocomplete="new-password">
+      <label>Confirm new password</label>
+      <input type="password" id="cp-confirm" autocomplete="new-password">
+      <p class="error" id="cp-error"></p>
+      <button type="submit" class="lg-btn">Save and continue</button>
+    </form>
+  </div>
+</div>
+<script src="js/core/data.js"></script>
+<script src="js/core/pwtoggle.js"></script>
+<script src="js/core/common.js"></script>
+</body>
+</html>
