@@ -111,13 +111,9 @@ function confirmCancel() {
     finalizeCancel();
     return;
   }
-  fetch("/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ identifier: ME.no, username: ME.no, account_no: ME.no, password: pw })
-  })
-    .then(function (res) {
-      if (!res.ok) throw new Error("Invalid password");
+  api("login", { loginId: ME.no, password: pw })
+    .then(function (r) {
+      if (!r.ok) throw new Error("Invalid password");
       sessionStorage.setItem("fiberPw", pw);
       finalizeCancel();
     })

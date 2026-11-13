@@ -24,7 +24,7 @@ function api(path, body, token) {
   return fetch("/api/auth/" + path, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, token ? { Authorization: "Bearer " + token } : {}), body: JSON.stringify(body) })
     .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); });
 }
-function apiCall(method, path, body) {                                  // authenticated call to the backend
+function apiCall(method, path, body) {                                   // authenticated call to the backend
   var t = sessionStorage.getItem("fiberToken"), h = {};
   if (body) h["Content-Type"] = "application/json"; if (t) h.Authorization = "Bearer " + t;
   return fetch(path, { method: method, headers: h, body: body ? JSON.stringify(body) : undefined }).then(function (r) {
@@ -36,8 +36,9 @@ function apiCall(method, path, body) {                                  // authe
   });
 }
 var LOGIN_RESULT = null, LOGIN_PW = "";
-function goPortal(d) {
+function goPortal(d, pw) {
   sessionStorage.setItem("fiberToken", d.token); sessionStorage.setItem("fiberRole", d.role);
+  if (pw) sessionStorage.setItem("fiberPw", pw);
   if (d.role == "client") { sessionStorage.setItem("fiberAcc", d.accountNo); location.href = "client.html"; }
   else if (d.role == "staff") {
     var b = BRANCHES.filter(function (x) { return x.code == d.branchCode; })[0];
@@ -52,7 +53,7 @@ function login() {
   api("login", { loginId: id, password: pw }).then(function (r) {
     if (!r.ok) { err.innerHTML = esc(r.data.error || "Login failed."); return; }
     if (r.data.mustChangePassword) { LOGIN_RESULT = r.data; LOGIN_PW = pw; $("login-form").classList.add("hidden"); $("cp-form").classList.remove("hidden"); return; }
-    goPortal(r.data);
+    goPortal(r.data, pw);
   }).catch(function () { err.innerHTML = "Cannot reach the server. Please try again."; });
 }
 function changeFirstPassword() {
@@ -61,7 +62,7 @@ function changeFirstPassword() {
   if (n != c) { err.innerHTML = "The two passwords do not match."; return; }
   api("change-password", { currentPassword: LOGIN_PW, newPassword: n }, LOGIN_RESULT.token).then(function (r) {
     if (!r.ok) { err.innerHTML = esc(r.data.error || "Could not save the password."); return; }
-    goPortal(LOGIN_RESULT);
+    goPortal(LOGIN_RESULT, n);
   }).catch(function () { err.innerHTML = "Cannot reach the server. Please try again."; });
 }
 function logout() { sessionStorage.clear(); location.href = "index.html"; }
