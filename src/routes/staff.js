@@ -32,18 +32,17 @@ router.get('/clients.csv', async (req, res) => {
 });
 
 // POST /api/staff/clients  -> register a client in the staff's own branch
-// body: { name, contactNo, email, address, facebook, routerLocation, planId, registeredDate }
 router.post('/clients', async (req, res) => {
   const b = req.body || {};
   if (!b.name || !b.contactNo || !b.email || !b.address || !b.planId || !b.registeredDate)
     return res.status(400).json({ error: 'Missing required fields' });
   const reg = new Date(b.registeredDate);
-  const tempPassword = crypto.randomBytes(5).toString('hex');           // shown to staff once
+  const tempPassword = crypto.randomBytes(5).toString('hex');
   const hash = await bcrypt.hash(tempPassword, 10);
 
   try {
     const out = await tx(async c => {
-      await c.query('SELECT pg_advisory_xact_lock($1)', [Number(req.user.branchCode)]);   // no duplicate client IDs
+      await c.query('SELECT pg_advisory_xact_lock($1)', [Number(req.user.branchCode)]);
       const seq = (await c.query('SELECT COALESCE(MAX(client_seq),0)+1 AS n FROM clients WHERE branch_code=$1', [req.user.branchCode])).rows[0].n;
       if (seq > 9999) throw new Error('Branch is full (9999 clients)');
       const accountNo = req.user.branchCode + String(reg.getFullYear() % 100).padStart(2, '0') + String(seq).padStart(4, '0');
@@ -54,7 +53,7 @@ router.post('/clients', async (req, res) => {
                               facebook, router_location, registered_date, due_day)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [accountNo, u.rows[0].user_id, req.user.branchCode, seq, b.planId, b.name, b.contactNo, b.email, b.address,
-         b.facebook || null, b.routerLocation || null, b.registeredDate, reg.getDate()]);   // due day = install day
+         b.facebook || null, b.routerLocation || null, b.registeredDate, reg.getDate()]);
       await logActivity(c, req.user.userId, req.user.branchCode, `Registered client ${accountNo} (${b.name})`);
       return accountNo;
     });
@@ -63,16 +62,15 @@ router.post('/clients', async (req, res) => {
 });
 
 // ---- Payments Verification Queue: single-server FIFO (M/M/1) ----
-// Oldest pending submission = Queue #1. Ties on created_at are broken by payment_id so the order never changes.
 const FIFO_ORDER = 'ORDER BY p.created_at ASC, p.payment_id ASC';
-async function lockQueue(c, branchCode) { await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['fifo-' + branchCode]); }   // one server: requests of a branch are handled one at a time
+async function lockQueue(c, branchCode) { await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['fifo-' + branchCode]); }
 async function assertHead(c, branchCode, id) {
   const h = (await c.query(`SELECT p.payment_id FROM payments p JOIN clients cl USING (account_no)
                              WHERE cl.branch_code=$1 AND p.status='Pending' ${FIFO_ORDER} LIMIT 1`, [branchCode])).rows[0];
   if (!h || Number(h.payment_id) !== Number(id)) throw Object.assign(new Error('FIFO: process Queue #1 (the oldest pending payment) first'), { status: 409 });
 }
 
-// GET /api/staff/payments/queue -> the buffer in FIFO order + live M/M/1 numbers
+// GET /api/staff/payments/queue
 router.get('/payments/queue', async (req, res) => {
   const bc = req.user.branchCode;
   const q = (await query(
@@ -96,7 +94,7 @@ router.get('/payments/queue', async (req, res) => {
     longest_wait_seconds: q.length ? q[0].waiting_seconds : 0 } });
 });
 
-// GET /api/staff/statements/open?q=  -> unpaid statements of this branch (for the cash entry)
+// GET /api/staff/statements/open?q=
 router.get('/statements/open', async (req, res) => {
   const { rows } = await query(
     `SELECT s.statement_id, s.account_no, c.name, s.amount, s.balance, s.due_date, pl.monthly_rate
@@ -111,11 +109,11 @@ router.get('/payments', async (req, res) => {
   const { rows } = await query(
     `SELECT p.*, c.name FROM payments p JOIN clients c USING (account_no)
       WHERE c.branch_code=$1 AND ($2::text IS NULL OR p.status=$2)
-      ORDER BY CASE WHEN p.status='Pending' THEN p.created_at END ASC, p.created_at DESC LIMIT 500`, [req.user.branchCode, req.query.status || null]);   // Pending: oldest first (FIFO)
+      ORDER BY CASE WHEN p.status='Pending' THEN p.created_at END ASC, p.created_at DESC LIMIT 500`, [req.user.branchCode, req.query.status || null]);
   res.json(rows);
 });
 
-// POST /api/staff/payments/cash  { statementId, amount, orNo? }  -> encode cash, auto-verified
+// POST /api/staff/payments/cash
 router.post('/payments/cash', async (req, res) => {
   const { statementId, amount, orNo } = req.body || {};
   try {
@@ -143,7 +141,7 @@ router.post('/payments/cash', async (req, res) => {
 router.patch('/payments/:id/verify', async (req, res) => {
   try {
     const orNo = await tx(async c => {
-      await lockQueue(c, req.user.branchCode); await assertHead(c, req.user.branchCode, req.params.id);   // only Queue #1
+      await lockQueue(c, req.user.branchCode); await assertHead(c, req.user.branchCode, req.params.id);
       const p = (await c.query(
         `SELECT p.* FROM payments p JOIN clients cl USING (account_no)
           WHERE p.payment_id=$1 AND cl.branch_code=$2 AND p.status='Pending' FOR UPDATE OF p`,
@@ -152,14 +150,14 @@ router.patch('/payments/:id/verify', async (req, res) => {
       return applyVerifiedPayment(c, p.payment_id, req.user.userId, req.user.branchCode);
     });
     res.json({ orNo });
-    deliverPendingEmails().catch(e => console.error(e));                   // receipt email
+    deliverPendingEmails().catch(e => console.error(e));
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 
 router.patch('/payments/:id/reject', async (req, res) => {
   try {
     await tx(async c => {
-      await lockQueue(c, req.user.branchCode); await assertHead(c, req.user.branchCode, req.params.id);   // only Queue #1
+      await lockQueue(c, req.user.branchCode); await assertHead(c, req.user.branchCode, req.params.id);
       const r = (await c.query(`UPDATE payments SET status='Rejected', verified_by_staff=$2, verified_at=now() WHERE payment_id=$1
                                 RETURNING account_no, statement_id, reference_no`, [req.params.id, req.user.userId])).rows[0];
       const msg = `we could not match GCash reference ${r.reference_no} to your payment, so it was not accepted. Please check the number and submit your payment again.`;
@@ -168,11 +166,11 @@ router.patch('/payments/:id/reject', async (req, res) => {
       await logActivity(c, req.user.userId, req.user.branchCode, `Rejected payment #${req.params.id}`);
     });
     res.json({ ok: true });
-    deliverPendingEmails().catch(e => console.error(e));                   // rejection email
+    deliverPendingEmails().catch(e => console.error(e));
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 
-// GET /api/staff/cancellations ; PATCH /api/staff/cancellations/:id  { approve: true|false }
+// GET /api/staff/cancellations ; PATCH /api/staff/cancellations/:id
 router.get('/cancellations', async (req, res) => {
   const { rows } = await query(
     `SELECT r.*, c.name FROM cancellation_requests r JOIN clients c USING (account_no)
@@ -201,7 +199,7 @@ router.patch('/cancellations/:id', async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// GET /api/staff/activity  (own branch, last 6 months)
+// GET /api/staff/activity
 router.get('/activity', async (req, res) => {
   const { rows } = await query(
     `SELECT * FROM activity_log WHERE branch_code=$1 AND logged_at >= now() - interval '6 months'

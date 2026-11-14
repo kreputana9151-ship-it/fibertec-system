@@ -13,7 +13,7 @@ const SIX = "date_trunc('month', current_date) - interval '6 months'";
 // GET /api/admin/clients?branch=04&status=Active
 router.get('/clients', async (req, res) => {
   const { rows } = await query(
-    `SELECT c.account_no, c.name, b.name AS branch, p.plan_name, c.status, c.due_day, c.email
+    `SELECT c.account_no, c.name, c.address, b.name AS branch, p.plan_name, p.monthly_rate, c.status, c.due_day, c.email
        FROM clients c JOIN branches b USING (branch_code) JOIN plans p USING (plan_id)
       WHERE ($1::text IS NULL OR c.branch_code=$1) AND ($2::text IS NULL OR c.status=$2)
       ORDER BY c.branch_code, c.client_seq`, [req.query.branch || null, req.query.status || null]);
@@ -27,6 +27,23 @@ router.get('/statements', async (req, res) => {
       WHERE s.billing_month >= (${SIX})
         AND ($1::date IS NULL OR s.billing_month=$1) AND ($2::text IS NULL OR c.branch_code=$2)
       ORDER BY s.billing_month DESC, s.account_no`, [req.query.month || null, req.query.branch || null]);
+  res.json(rows);
+});
+
+// GET /api/admin/payments?month=2026-11&branch=04&status=Verified
+router.get('/payments', async (req, res) => {
+  const { rows } = await query(
+    `SELECT p.*, c.name, c.branch_code, b.name AS branch
+       FROM payments p
+       JOIN clients c USING (account_no)
+       JOIN branches b ON b.branch_code = c.branch_code
+      WHERE p.created_at >= (${SIX})
+        AND ($1::text IS NULL OR to_char(COALESCE(p.payment_date, p.created_at::date), 'YYYY-MM') = $1)
+        AND ($2::text IS NULL OR c.branch_code = $2)
+        AND ($3::text IS NULL OR p.status = $3)
+      ORDER BY COALESCE(p.payment_date, p.created_at::date) DESC, p.payment_id DESC`,
+    [req.query.month || null, req.query.branch || null, req.query.status || null]
+  );
   res.json(rows);
 });
 
@@ -58,7 +75,7 @@ router.get('/notices', async (req, res) => {
 router.post('/notices/:id/resend', async (req, res) => {
   const n = (await query('SELECT * FROM notices WHERE notice_id=$1', [req.params.id])).rows[0];
   if (!n) return res.status(404).json({ error: 'Notice not found' });
-  const ok = n.channel === 'Email' ? await sendEmail(n.recipient, n.notice_type, 'Resent notice') : true;
+  const ok = n.channel === 'Email' ? await sendEmail(n.recipient, n.notice_type, n.message || 'Resent notice') : true;
   await tx(async c => {
     await c.query('UPDATE notices SET delivery_status=$2, resent_by_admin=$3 WHERE notice_id=$1',
       [n.notice_id, ok ? 'Sent' : 'Failed', req.user.userId]);
@@ -68,7 +85,6 @@ router.post('/notices/:id/resend', async (req, res) => {
 });
 
 // PATCH /api/admin/clients/:accountNo/status  { status: 'Active'|'Terminated', reason }
-// Admin decides on Under Review accounts, can terminate, and can reinstate a Terminated account.
 router.patch('/clients/:accountNo/status', async (req, res) => {
   const { status, reason } = req.body || {};
   if (!['Active', 'Terminated'].includes(status)) return res.status(400).json({ error: 'Use Active or Terminated' });
@@ -132,7 +148,6 @@ router.get('/users', async (req, res) => {
 });
 
 // POST /api/admin/users/:userId/reset-password  { newPassword }
-// The owner sets a new password for a client, a staff or the owner's own account. Stored hashed; the person must change it at next login.
 router.post('/users/:userId/reset-password', async (req, res) => {
   const pw = (req.body || {}).newPassword;
   if (typeof pw !== 'string' || pw.length < 8 || pw.length > 72) return res.status(400).json({ error: 'Password must be 8 to 72 characters.' });
