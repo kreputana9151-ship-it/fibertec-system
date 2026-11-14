@@ -12,12 +12,12 @@ var LIVE = {
 };
 
 var BRANCH_MAP = {
-  "01": "Makati",
-  "02": "Taguig",
-  "03": "Pasig",
-  "04": "Quezon City",
-  "05": "Manila",
-  "06": "Parañaque"
+  "01": "Bagong Ilog",
+  "02": "Caniogan",
+  "03": "Palatiw",
+  "04": "Maybunga Bliss 3",
+  "05": "Bliss 1",
+  "06": "Nagpayong"
 };
 
 function branchCodeForName(name) {
