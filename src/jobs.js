@@ -1,8 +1,10 @@
 const cron = require('node-cron');
 const { query } = require('./db');
+const { deliverPendingEmails } = require('./services/notify');
 const { generateStatementsForToday, sendPendingStatements, runStatusEngine } = require('./services/billing');
 
 function startJobs() {
+  setInterval(() => deliverPendingEmails().catch(e => console.error('[email queue]', e.message)), 30000);
   // every day 00:05 Manila time: statements -> send -> status changes -> purge old history
   cron.schedule('5 0 * * *', async () => {
     try {

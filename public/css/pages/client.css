@@ -61,3 +61,11 @@ body.client .topbar .right { justify-self: end; margin-left: 0; }
 .c-dd-foot { text-align: center; padding: 10px; font-weight: 600; color: #0166b6; cursor: pointer; border-top: 1px solid #ddd; transition: background .15s; } .c-dd-foot:hover { background: #e4effb; }
 @media (max-width: 1100px) { .c-row4 { grid-template-columns: 1fr 1fr; } .c-row2, .c-two, .c-notif { grid-template-columns: 1fr; } .c-notif { height: auto; } .topbar .brand small { display: none; } }
 @media (max-width: 760px) { body.client .topbar { display: flex; } body.client .topbar nav { margin: 0 auto; } .topbar > img { display: none; } .c-row4 { grid-template-columns: 1fr; } .topbar nav a { padding: 8px 10px; font-size: 14px; } .who { display: none; } .c-wrap { padding: 16px; } }
+
+/* unread / read notifications */
+.c-mark { float: right; font-size: 12px; font-weight: 600; color: #0166b6; cursor: pointer; margin-top: 4px; } .c-mark:hover { text-decoration: underline; }
+.c-dd-item.unread { background: #eaf3ff; border-left: 4px solid #0166b6; font-weight: 700; } .c-dd-item:not(.unread) { color: #556; }
+.newtag { background: #ff5454; color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 8px; }
+.c-nitem.unread { background: #eaf3ff; border-left: 4px solid #ff5454; } .c-nitem:not(.unread):not(.sel) { font-weight: 400; color: #556; }
+.c-nitem .udot { margin-left: auto; flex: none; width: 9px; height: 9px; border-radius: 50%; background: #ff5454; align-self: center; }
+.c-nitem.sel .udot { background: #fff; }

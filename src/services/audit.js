@@ -25,13 +25,13 @@ async function changeStatus(c, accountNo, newStatus, reason, userId, extra = {})
   return old;
 }
 
-async function addNotice(c, { accountNo, statementId, type, channel = 'Email', status = 'Pending' }) {
+async function addNotice(c, { accountNo, statementId, type, channel = 'Email', status = 'Pending', message = null }) {
   const { rows } = await c.query('SELECT email FROM clients WHERE account_no=$1', [accountNo]);
   const recipient = channel === 'Email' ? rows[0].email : 'Client Portal Bell';
   const r = await c.query(
-    `INSERT INTO notices (account_no, statement_id, notice_date, channel, recipient, notice_type, delivery_status)
-     VALUES ($1,$2,current_date,$3,$4,$5,$6) RETURNING notice_id`,
-    [accountNo, statementId || null, channel, recipient, type, status]
+    `INSERT INTO notices (account_no, statement_id, notice_date, channel, recipient, notice_type, delivery_status, message)
+     VALUES ($1,$2,current_date,$3,$4,$5,$6,$7) RETURNING notice_id`,
+    [accountNo, statementId || null, channel, recipient, type, status, message]
   );
   return r.rows[0].notice_id;
 }

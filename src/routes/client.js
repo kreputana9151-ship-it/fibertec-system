@@ -1,51 +1,84 @@
 const router = require('express').Router();
+const bcrypt = require('bcrypt');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { query, tx } = require('../db');
+const { query } = require('../db');
+const { buildStatementPdf, loadStatement } = require('../services/statementPdf');
 
 router.use(requireAuth, requireRole('client'));
+const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
 
-// GET /api/client/me  -> account overview + remaining days until due date
-router.get('/me', async (req, res) => {
+// GET /api/client/me  -> account overview (dates are sent as plain YYYY-MM-DD text, no time-zone shifting)
+router.get('/me', wrap(async (req, res) => {
   const { rows } = await query(
-    `SELECT c.account_no, c.name, c.email, c.contact_no, c.address, c.status, c.grace_end_date,
+    `SELECT c.account_no, c.name, c.email, c.contact_no, c.address, c.status, c.status_reason, c.router_location, c.due_day,
+            c.registered_date::text AS registered_date, c.grace_end_date::text AS grace_end_date,
             p.plan_name, p.monthly_rate, b.name AS branch,
-            (SELECT row_to_json(x) FROM (
-               SELECT invoice_no, due_date, amount, balance, payment_status,
-                      (due_date - current_date) AS days_left
-                 FROM statements WHERE account_no = c.account_no
-                ORDER BY billing_month DESC LIMIT 1) x) AS current_statement
+            EXISTS (SELECT 1 FROM payments y WHERE y.account_no = c.account_no AND y.status = 'Pending') AS has_pending,
+            (SELECT row_to_json(r) FROM (SELECT status, request_date::text AS request_date FROM cancellation_requests
+              WHERE account_no = c.account_no ORDER BY request_id DESC LIMIT 1) r) AS cancel
        FROM clients c JOIN plans p USING (plan_id) JOIN branches b USING (branch_code)
       WHERE c.account_no = $1`, [req.user.accountNo]);
   res.json(rows[0]);
-});
+}));
 
-// the three history endpoints read the 3-month VIEWS (older data is hidden from clients)
-router.get('/statements', async (req, res) => {
-  const { rows } = await query('SELECT * FROM v_client_statements WHERE account_no=$1 ORDER BY billing_month DESC', [req.user.accountNo]);
+// the history endpoints read the 3-month VIEWS (older data is hidden from clients)
+router.get('/statements', wrap(async (req, res) => {
+  const { rows } = await query(
+    `SELECT statement_id, invoice_no, billing_month::text, bill_date::text, due_date::text, amount, amount_paid, balance, payment_status
+       FROM v_client_statements WHERE account_no=$1 ORDER BY billing_month DESC`, [req.user.accountNo]);
   res.json(rows);
-});
-router.get('/payments', async (req, res) => {
-  const { rows } = await query('SELECT * FROM v_client_payments WHERE account_no=$1 ORDER BY payment_date DESC', [req.user.accountNo]);
+}));
+router.get('/payments', wrap(async (req, res) => {
+  const { rows } = await query(
+    `SELECT payment_id, statement_id, amount, method, payment_type, reference_no, or_no, status, payment_date::text, created_at
+       FROM v_client_payments WHERE account_no=$1 ORDER BY created_at DESC`, [req.user.accountNo]);
   res.json(rows);
-});
-router.get('/notices', async (req, res) => {
-  const { rows } = await query('SELECT * FROM v_client_notices WHERE account_no=$1 ORDER BY notice_date DESC', [req.user.accountNo]);
+}));
+router.get('/notices', wrap(async (req, res) => {          // bell notifications (portal channel), newest first, last 3 months
+  const { rows } = await query(
+    `SELECT n.notice_id, n.notice_type, n.message, n.created_at, (n.read_at IS NOT NULL) AS is_read,
+            s.invoice_no, s.amount, s.due_date::text AS due_date
+       FROM notices n LEFT JOIN statements s ON s.statement_id = n.statement_id
+      WHERE n.account_no=$1 AND n.channel='Portal Notification' AND n.notice_date >= (date_trunc('month', current_date) - interval '3 months')::date
+      ORDER BY n.created_at DESC, n.notice_id DESC`, [req.user.accountNo]);
   res.json(rows);
-});
+}));
+router.post('/notices/read-all', wrap(async (req, res) => {
+  await query("UPDATE notices SET read_at=now() WHERE account_no=$1 AND channel='Portal Notification' AND read_at IS NULL", [req.user.accountNo]);
+  res.json({ ok: true });
+}));
+router.post('/notices/:id/read', wrap(async (req, res) => {
+  if (!/^[0-9]+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid notice' });
+  await query("UPDATE notices SET read_at=COALESCE(read_at, now()) WHERE notice_id=$1 AND account_no=$2 AND channel='Portal Notification'", [req.params.id, req.user.accountNo]);
+  res.json({ ok: true });
+}));
 
-// POST /api/client/payments  { statementId, amount, referenceNo }   (GCash reference, goes to Pending)
-// Rules: partial only on/before due date; in grace period the FULL balance is required.
-router.post('/payments', async (req, res) => {
+// GET /api/client/statements/:id/pdf  -> downloadable e-Statement
+router.get('/statements/:id/pdf', wrap(async (req, res) => {
+  if (!/^[0-9]+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid statement' });
+  const own = await query('SELECT 1 FROM v_client_statements WHERE statement_id=$1 AND account_no=$2', [req.params.id, req.user.accountNo]);
+  const d = own.rowCount ? await loadStatement(query, req.params.id) : null;
+  if (!d) return res.status(404).json({ error: 'Statement not found' });
+  const { s, pays } = d;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="FiberTec-Statement-${s.invoice_no.replace(/[^A-Za-z0-9-]+/g, '')}.pdf"`);
+  buildStatementPdf(res, s, pays);
+}));
+
+// POST /api/client/payments  { statementId, amount, referenceNo }   (GCash reference, goes to Pending = joins the staff FIFO queue)
+// Rules: partial only on/before due date; after the due date the FULL balance is required.
+router.post('/payments', wrap(async (req, res) => {
   const { statementId, amount, referenceNo } = req.body || {};
   if (!/^[0-9]{13}$/.test(referenceNo || '')) return res.status(400).json({ error: 'GCash reference must be 13 digits' });
 
   const s = (await query('SELECT * FROM statements WHERE statement_id=$1 AND account_no=$2', [statementId, req.user.accountNo])).rows[0];
   if (!s) return res.status(404).json({ error: 'Statement not found' });
   if (Number(s.balance) <= 0) return res.status(400).json({ error: 'Already fully paid' });
+  if ((await query("SELECT 1 FROM payments WHERE account_no=$1 AND status='Pending'", [req.user.accountNo])).rowCount)
+    return res.status(409).json({ error: 'You already have a payment waiting for staff verification' });
 
   const amt = Number(amount);
   if (!(amt > 0) || amt > Number(s.balance)) return res.status(400).json({ error: 'Invalid amount' });
-
   const pastDue = new Date(s.due_date) < new Date(new Date().toDateString());
   const isFull = amt === Number(s.balance);
   if (pastDue && !isFull) return res.status(400).json({ error: 'After the due date the full balance is required' });
@@ -57,19 +90,21 @@ router.post('/payments', async (req, res) => {
       [statementId, req.user.accountNo, amt, isFull ? 'Full payment' : 'Partial payment', referenceNo]);
     res.status(201).json(r.rows[0]);
   } catch (e) { next500(res, e); }
-});
+}));
 
-// POST /api/client/cancellation  { reason }
-router.post('/cancellation', async (req, res) => {
-  const { reason } = req.body || {};
+// POST /api/client/cancellation  { reason, password }   (the client confirms with their password)
+router.post('/cancellation', wrap(async (req, res) => {
+  const { reason, password } = req.body || {};
   if (!reason) return res.status(400).json({ error: 'Reason required' });
+  const u = (await query('SELECT password_hash FROM users WHERE user_id=$1', [req.user.userId])).rows[0];
+  if (!u || !(await bcrypt.compare(String(password || ''), u.password_hash))) return res.status(403).json({ error: 'Incorrect password. Cancellation was not submitted.' });
   const open = await query("SELECT 1 FROM cancellation_requests WHERE account_no=$1 AND status='Pending'", [req.user.accountNo]);
   if (open.rowCount) return res.status(409).json({ error: 'You already have a pending request' });
   const r = await query(
-    `INSERT INTO cancellation_requests (account_no, request_date, reason) VALUES ($1,current_date,$2) RETURNING *`,
+    `INSERT INTO cancellation_requests (account_no, request_date, reason) VALUES ($1,current_date,$2) RETURNING request_id, status`,
     [req.user.accountNo, reason]);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 function next500(res, e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
 module.exports = router;

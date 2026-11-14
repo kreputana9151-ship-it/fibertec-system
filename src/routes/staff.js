@@ -4,7 +4,8 @@ const crypto = require('crypto');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { query, tx } = require('../db');
 const { applyVerifiedPayment } = require('../services/billing');
-const { changeStatus, logActivity } = require('../services/audit');
+const { changeStatus, logActivity, addNotice } = require('../services/audit');
+const { deliverPendingEmails } = require('../services/notify');
 
 router.use(requireAuth, requireRole('staff'));
 // every query below uses req.user.branchCode, so staff can never see another branch
@@ -151,6 +152,7 @@ router.patch('/payments/:id/verify', async (req, res) => {
       return applyVerifiedPayment(c, p.payment_id, req.user.userId, req.user.branchCode);
     });
     res.json({ orNo });
+    deliverPendingEmails().catch(e => console.error(e));                   // receipt email
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 
@@ -158,10 +160,15 @@ router.patch('/payments/:id/reject', async (req, res) => {
   try {
     await tx(async c => {
       await lockQueue(c, req.user.branchCode); await assertHead(c, req.user.branchCode, req.params.id);   // only Queue #1
-      await c.query(`UPDATE payments SET status='Rejected', verified_by_staff=$2, verified_at=now() WHERE payment_id=$1`, [req.params.id, req.user.userId]);
+      const r = (await c.query(`UPDATE payments SET status='Rejected', verified_by_staff=$2, verified_at=now() WHERE payment_id=$1
+                                RETURNING account_no, statement_id, reference_no`, [req.params.id, req.user.userId])).rows[0];
+      const msg = `we could not match GCash reference ${r.reference_no} to your payment, so it was not accepted. Please check the number and submit your payment again.`;
+      await addNotice(c, { accountNo: r.account_no, statementId: r.statement_id, type: 'System Notice', channel: 'Portal Notification', status: 'Sent', message: msg });
+      await addNotice(c, { accountNo: r.account_no, statementId: r.statement_id, type: 'System Notice', channel: 'Email', status: 'Pending', message: msg });
       await logActivity(c, req.user.userId, req.user.branchCode, `Rejected payment #${req.params.id}`);
     });
     res.json({ ok: true });
+    deliverPendingEmails().catch(e => console.error(e));                   // rejection email
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 

@@ -1,6 +1,8 @@
 const { tx, query } = require('../db');
 const { changeStatus, addNotice, logActivity } = require('./audit');
 const { sendEmail } = require('./mailer');
+const { loadStatement, pdfBuffer } = require('./statementPdf');
+const { deliverPendingEmails } = require('./notify');
 
 const pad = (n, l = 2) => String(n).padStart(l, '0');
 const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -55,9 +57,14 @@ async function sendStatement(statementId, adminUserId) {
   );
   if (!rows.length) throw new Error('Statement not found');
   const s = rows[0];
+  const money = n => 'PHP ' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  let attachments = [];
+  try { const d = await loadStatement(query, statementId); attachments = [{ name: `FiberTec-Statement-${s.invoice_no.replace(/[^A-Za-z0-9-]+/g, '')}.pdf`, content: (await pdfBuffer(d.s, d.pays)).toString('base64') }]; }
+  catch (e) { console.error('[statement pdf]', e.message); }
   const ok = await sendEmail(
-    s.email, `FiberTec billing statement ${s.invoice_no}`,
-    `Hi ${s.name}, your balance is PHP ${s.balance}, due ${iso(new Date(s.due_date))}. Account no: ${s.account_no}`
+    s.email, `FiberTec e-Statement ${s.invoice_no}`,
+    `Hi ${s.name.split(' ')[0]},\n\nyour e-Statement ${s.invoice_no} is ready (PDF attached).\nAmount due: ${money(s.balance)}\nDue date: ${iso(new Date(s.due_date))}\nAccount no.: ${s.account_no}\n\nOn or before the due date you can pay in full, or pay half. Pay with GCash and submit the 13-digit reference number in the client portal, or pay in cash at your branch.${process.env.APP_URL ? `\n\nClient portal: ${process.env.APP_URL}` : ''}`,
+    { attachments }
   );
   await tx(async c => {
     await c.query(
@@ -113,6 +120,7 @@ async function runStatusEngine() {
       { termDate: iso(new Date()), termReason: 'Non-payment' }));
     out.terminated++;
   }
+  await deliverPendingEmails();
   return out;
 }
 
@@ -140,8 +148,10 @@ async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
     if (['Grace Period', 'Under Review'].includes(cl.status))
       await changeStatus(c, p.account_no, 'Active', 'Full balance paid', staffUserId);
   }
-  await addNotice(c, { accountNo: p.account_no, statementId: s.statement_id, type: 'Payment Receipt',
-                       channel: p.method === 'GCash' ? 'Email' : 'Portal Notification', status: 'Sent' });
+  const msg = `we received your ${p.method} payment of PHP ${Number(p.amount).toFixed(2)} (${p.reference_no ? `Ref ${p.reference_no}, ` : ''}O.R. ${orNo}). Thank you!`;
+  const rc = { accountNo: p.account_no, statementId: s.statement_id, type: 'Payment Receipt', message: msg };
+  await addNotice(c, { ...rc, channel: 'Portal Notification', status: 'Sent' });      // bell notification
+  await addNotice(c, { ...rc, channel: 'Email', status: 'Pending' });                 // email, sent right after the commit
   await logActivity(c, staffUserId, branchCode, `Verified ${p.method} payment ${orNo} for ${p.account_no}`);
   return orNo;
 }

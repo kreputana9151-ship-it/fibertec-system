@@ -141,3 +141,9 @@ git push
 4. Open **https://fibertecitsolutions.test**. On Mac/Linux port 443 needs `sudo`; if you prefer, keep `PORT=3000` and the address will be `https://fibertecitsolutions.test:3000`.
 
 This name works only on computers that have the hosts line. A public address such as `fibertecitsolutions.com` needs a registered domain and hosting.
+
+## Notifications, email and PDF (Render + Neon + Brevo)
+1. Neon SQL Editor: run `database/migrate_notifications.sql` once (adds read/unread + notice text).
+2. Render > Environment: `BREVO_API_KEY`, `MAIL_FROM_EMAIL` (verified Brevo sender), `MAIL_FROM_NAME`, `APP_URL` (your https://...onrender.com address), `TRUST_PROXY=true`. Then redeploy (`npm install` adds `pdfkit`).
+3. Emails are sent for: e-Statement (PDF attached), payment receipt, rejected payment, overdue / grace-period warning. Failures are logged in the Render logs as `[EMAIL FAILED]`.
+4. Portal bell: red dot while anything is unread; unread items are highlighted; "Mark all as read".

@@ -17,14 +17,14 @@
     <a id="nav-statement" onclick="showPage('statement')">Statements</a>
   </nav>
   <div class="right">
-    <button class="ic" onclick="toggleBell()" title="Notifications"><img src="images/icons/bell.png" alt="Notifications"><i class="dot-n"></i></button>
+    <button class="ic" onclick="toggleBell()" title="Notifications"><img src="images/icons/bell.png" alt="Notifications"><i class="dot-n" id="bell-dot" style="display:none"></i></button>
     <span class="avatar" id="c-av"></span><div class="who"><span id="c-name"></span><small>Client</small></div>
     <button class="logout" onclick="logout()">Logout</button>
   </div>
 </header>
 
 <div class="c-dd hidden" id="bell">
-  <h3>Notifications</h3><div class="c-dd-list" id="dd-list"></div>
+  <h3>Notifications <a id="mark-all" class="c-mark" style="display:none" onclick="markAllRead()">Mark all as read</a></h3><div class="c-dd-list" id="dd-list"></div>
   <div class="c-dd-foot" onclick="showPage('notifications')">See all</div>
 </div>
 

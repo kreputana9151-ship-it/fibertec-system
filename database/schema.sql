@@ -164,6 +164,8 @@ CREATE TABLE notices (
                   CHECK (notice_type IN ('7-Day Billing Notice','Disconnection Warning','System Notice','Payment Receipt')),
   delivery_status VARCHAR(10)  NOT NULL DEFAULT 'Pending' CHECK (delivery_status IN ('Pending','Sent','Failed')),
   resent_by_admin INT REFERENCES admins(user_id),
+  message         VARCHAR(400),                -- text shown in the portal bell / email
+  read_at         TIMESTAMPTZ,                 -- NULL = client has not read it yet
   created_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
