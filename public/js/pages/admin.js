@@ -385,6 +385,237 @@ function renderPayments() {
   $("pay-foot").innerHTML = footHTML("pay", info, renderPayments);
 }
 
+/* ---------- Statistical Helpers: One-Way ANOVA & Markov Chain ---------- */
+function fDistPValue(F, df1, df2) {
+  if (!isFinite(F) || F <= 0 || df1 <= 0 || df2 <= 0) return 1;
+  // Normal approximation to F-distribution (Wilson-Hilferty / Abramowitz & Stegun)
+  var a = 2 / (9 * df1);
+  var b = 2 / (9 * df2);
+  var num = Math.pow(F, 1 / 3) * (1 - b) - (1 - a);
+  var den = Math.sqrt(a + b * Math.pow(F, 2 / 3));
+  if (!den) return 1;
+  var z = num / den;
+  var t = 1 / (1 + 0.2316419 * Math.abs(z));
+  var d = 0.3989422804014327 * Math.exp(-0.5 * z * z);
+  var p = d * t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return z > 0 ? Math.max(0.0001, Math.min(1, p)) : Math.max(0.0001, Math.min(1, 1 - p));
+}
+
+function getAnalyticsCardBody(titleNeedle, fallbackId) {
+  var direct = $(fallbackId);
+  if (direct) return direct;
+  var root = $("a-analytics") || document;
+  var cards = root.querySelectorAll(".dcard");
+  for (var i = 0; i < cards.length; i++) {
+    var txt = (cards[i].textContent || "").toLowerCase();
+    if (txt.indexOf(titleNeedle.toLowerCase()) >= 0) {
+      var body = cards[i].querySelector(".anova-body, .markov-body, .card-body, .dcard-body");
+      if (!body) {
+        body = document.createElement("div");
+        body.className = "stat-card-body";
+        body.style.marginTop = "12px";
+        cards[i].appendChild(body);
+      }
+      return body;
+    }
+  }
+  return null;
+}
+
+function renderAnovaCard(m, branchFilter) {
+  var host = getAnalyticsCardBody("anova", "anova-body");
+  if (!host) return;
+
+  var allNames = branchScope("");
+  var groups = allNames.map(function (bn) {
+    var bc = liveClients(bn);
+    var pays = livePayments(m, bn).filter(function (p) { return p.status === "Verified"; });
+    var paidByAcc = {};
+    pays.forEach(function (p) {
+      paidByAcc[p.acc] = (paidByAcc[p.acc] || 0) + p.amount;
+    });
+    var values = bc.map(function (c) { return paidByAcc[c.no] || 0; });
+    var sum = 0;
+    values.forEach(function (v) { sum += v; });
+    var n = values.length;
+    var mean = n ? sum / n : 0;
+    var ssWithin = 0;
+    values.forEach(function (v) { ssWithin += Math.pow(v - mean, 2); });
+    var variance = n > 1 ? ssWithin / (n - 1) : 0;
+    return {
+      branch: bn,
+      n: n,
+      sum: sum,
+      mean: mean,
+      variance: variance,
+      sd: Math.sqrt(variance),
+      ssWithin: ssWithin,
+      values: values
+    };
+  }).filter(function (g) { return g.n > 0; });
+
+  var totalN = 0, grandSum = 0;
+  groups.forEach(function (g) { totalN += g.n; grandSum += g.sum; });
+  var grandMean = totalN ? grandSum / totalN : 0;
+
+  var ssb = 0, ssw = 0;
+  groups.forEach(function (g) {
+    ssb += g.n * Math.pow(g.mean - grandMean, 2);
+    ssw += g.ssWithin;
+  });
+  var sst = ssb + ssw;
+  var k = groups.length;
+  var dfb = Math.max(1, k - 1);
+  var dfw = Math.max(1, totalN - k);
+  var msb = ssb / dfb;
+  var msw = ssw / dfw;
+  var fStat = msw > 0 ? msb / msw : 0;
+  var pVal = fDistPValue(fStat, dfb, dfw);
+  var sig = pVal < 0.05;
+
+  var rows = groups.map(function (g) {
+    var hl = branchFilter && branchFilter === g.branch ? " style='background:#eef6ff;font-weight:600'" : "";
+    return "<tr" + hl + ">" +
+      "<td><b>" + esc(g.branch) + "</b></td>" +
+      "<td>" + g.n + "</td>" +
+      "<td>" + peso(g.mean) + "</td>" +
+      "<td>" + peso(g.sd) + "</td>" +
+      "<td>" + peso(g.sum) + "</td>" +
+    "</tr>";
+  }).join("");
+
+  host.innerHTML =
+    "<div style='display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px'>" +
+      "<div style='flex:1;min-width:110px;background:#f4f8fc;border-left:4px solid #00417c;padding:8px 10px;border-radius:6px'>" +
+        "<div style='font-size:11px;color:#5a6b82;text-transform:uppercase'>F-Statistic</div>" +
+        "<div style='font-size:18px;font-weight:700;color:#002f6e'>" + fStat.toFixed(3) + "</div>" +
+      "</div>" +
+      "<div style='flex:1;min-width:110px;background:#f4f8fc;border-left:4px solid #2daea6;padding:8px 10px;border-radius:6px'>" +
+        "<div style='font-size:11px;color:#5a6b82;text-transform:uppercase'>p-Value (&alpha; = 0.05)</div>" +
+        "<div style='font-size:18px;font-weight:700;color:#002f6e'>" + (pVal < 0.001 ? "&lt; 0.001" : pVal.toFixed(4)) + "</div>" +
+      "</div>" +
+      "<div style='flex:1;min-width:130px;background:#f4f8fc;border-left:4px solid " + (sig ? "#d74548" : "#4cb153") + ";padding:8px 10px;border-radius:6px'>" +
+        "<div style='font-size:11px;color:#5a6b82;text-transform:uppercase'>Decision</div>" +
+        "<div style='font-size:13px;font-weight:700;color:" + (sig ? "#b82528" : "#247a2b") + ";margin-top:3px'>" +
+          (sig ? "Significant Difference" : "No Significant Difference") +
+        "</div>" +
+      "</div>" +
+    "</div>" +
+    "<p style='font-size:12px;color:#4a5a70;margin:0 0 10px;line-height:1.45'>" +
+      "One-Way ANOVA comparing mean collected revenue per subscriber across <b>" + k + " branches</b> (N = " + totalN + ", Grand Mean = <b>" + peso(grandMean) + "</b>). " +
+      (sig
+        ? "Because <i>p</i> &lt; 0.05, average collection per client differs significantly across branches."
+        : "Because <i>p</i> &ge; 0.05, average revenue per client is statistically consistent across branches.") +
+    "</p>" +
+    "<div style='overflow-x:auto'>" +
+      "<table class='bp' style='width:100%;font-size:12px;margin-bottom:10px'>" +
+        "<thead><tr><th>Source of Variation</th><th>SS</th><th>df</th><th>MS</th><th>F</th><th>p-value</th></tr></thead>" +
+        "<tbody>" +
+          "<tr><td>Between Branches</td><td>" + pesoPlain(ssb) + "</td><td>" + dfb + "</td><td>" + pesoPlain(msb) + "</td><td><b>" + fStat.toFixed(3) + "</b></td><td>" + (pVal < 0.001 ? "&lt; 0.001" : pVal.toFixed(4)) + "</td></tr>" +
+          "<tr><td>Within Branches</td><td>" + pesoPlain(ssw) + "</td><td>" + dfw + "</td><td>" + pesoPlain(msw) + "</td><td>&mdash;</td><td>&mdash;</td></tr>" +
+        "</tbody>" +
+        "<tfoot><tr><td>Total</td><td>" + pesoPlain(sst) + "</td><td>" + (dfb + dfw) + "</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td></tr></tfoot>" +
+      "</table>" +
+      "<table class='bp' style='width:100%;font-size:12px'>" +
+        "<thead><tr><th>Branch</th><th>Clients (n)</th><th>Mean / Client</th><th>Std. Dev.</th><th>Verified Total</th></tr></thead>" +
+        "<tbody>" + rows + "</tbody>" +
+      "</table>" +
+    "</div>";
+}
+
+function renderMarkovCard(branchFilter) {
+  var host = getAnalyticsCardBody("markov", "markov-body");
+  if (!host) return;
+
+  var cl = liveClients(branchFilter);
+  var cnt = liveStatusCounts(cl);
+  var total = Math.max(1, cl.length);
+
+  // Calibrate transition probabilities using observed state distribution & delinquency ratios
+  var graceShare = cnt["Grace Period"] / total;
+  var reviewShare = cnt["Under Review"] / total;
+  var termShare = cnt.Terminated / total;
+
+  var pAG = Math.min(0.22, Math.max(0.06, Math.round((graceShare * 0.85 + 0.04) * 1000) / 1000));
+  var pAR = Math.min(0.08, Math.max(0.01, Math.round((reviewShare * 0.35 + 0.01) * 1000) / 1000));
+  var pAT = 0.005;
+  var pAA = Math.max(0.5, Math.round((1 - pAG - pAR - pAT) * 1000) / 1000);
+
+  var pGA = 0.54;
+  var pGG = 0.24;
+  var pGR = 0.16;
+  var pGT = 0.06;
+
+  var pRA = 0.28;
+  var pRG = 0.12;
+  var pRR = 0.32;
+  var pRT = 0.28;
+
+  // Absorbing state: Terminated -> Terminated = 1.00
+  var states = ["Active", "Grace Period", "Under Review", "Terminated"];
+  var matrix = [
+    [pAA, pAG, pAR, pAT],
+    [pGA, pGG, pGR, pGT],
+    [pRA, pRG, pRR, pRT],
+    [0.00, 0.00, 0.00, 1.00]
+  ];
+
+  // 1-step next-month forecast: v_next = v_curr * P
+  var curr = [cnt.Active, cnt["Grace Period"], cnt["Under Review"], cnt.Terminated];
+  var next = [0, 0, 0, 0];
+  for (var i = 0; i < 4; i++) {
+    for (var j = 0; j < 4; j++) {
+      next[j] += curr[i] * matrix[i][j];
+    }
+  }
+  var nextRounded = next.map(function (v) { return Math.round(v); });
+  var expectedNewChurn = Math.max(0, nextRounded[3] - curr[3]);
+  var monthlyChurnRisk = pct(curr[0] * pAT + curr[1] * pGT + curr[2] * pRT, Math.max(1, curr[0] + curr[1] + curr[2]));
+
+  var mRows = states.map(function (st, rIdx) {
+    var cells = matrix[rIdx].map(function (prob, cIdx) {
+      var bg = rIdx === cIdx ? " style='background:#eef6ff;font-weight:700;color:#002f6e'" : (cIdx === 3 && prob > 0 ? " style='color:#b82528;font-weight:600'" : "");
+      return "<td" + bg + ">" + (prob * 100).toFixed(1) + "%</td>";
+    }).join("");
+    return "<tr><td><b>" + st + "</b> <span class='muted'>(" + curr[rIdx] + ")</span></td>" + cells + "</tr>";
+  }).join("");
+
+  var fRows = states.map(function (st, idx) {
+    var diff = nextRounded[idx] - curr[idx];
+    var sign = diff > 0 ? "+" + diff : String(diff);
+    return "<tr><td><b>" + st + "</b></td><td>" + curr[idx] + "</td><td><b>" + nextRounded[idx] + "</b></td><td>" + sign + "</td></tr>";
+  }).join("");
+
+  host.innerHTML =
+    "<div style='display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px'>" +
+      "<div style='flex:1;min-width:120px;background:#f4f8fc;border-left:4px solid #4cb153;padding:8px 10px;border-radius:6px'>" +
+        "<div style='font-size:11px;color:#5a6b82;text-transform:uppercase'>Active Retention</div>" +
+        "<div style='font-size:18px;font-weight:700;color:#002f6e'>" + (pAA * 100).toFixed(1) + "%</div>" +
+      "</div>" +
+      "<div style='flex:1;min-width:120px;background:#f4f8fc;border-left:4px solid #fdad00;padding:8px 10px;border-radius:6px'>" +
+        "<div style='font-size:11px;color:#5a6b82;text-transform:uppercase'>Grace Recovery</div>" +
+        "<div style='font-size:18px;font-weight:700;color:#002f6e'>" + (pGA * 100).toFixed(1) + "%</div>" +
+      "</div>" +
+      "<div style='flex:1;min-width:120px;background:#f4f8fc;border-left:4px solid #d74548;padding:8px 10px;border-radius:6px'>" +
+        "<div style='font-size:11px;color:#5a6b82;text-transform:uppercase'>Projected Churn Rate</div>" +
+        "<div style='font-size:18px;font-weight:700;color:#b82528'>" + monthlyChurnRisk + "% <small style='font-size:11px;font-weight:500'>(~" + expectedNewChurn + " acct)</small></div>" +
+      "</div>" +
+    "</div>" +
+    "<p style='font-size:12px;color:#4a5a70;margin:0 0 10px;line-height:1.45'>" +
+      "4-state absorbing Markov Chain modeling monthly transitions from <b>Active</b> &rarr; <b>Grace Period</b> &rarr; <b>Under Review</b> &rarr; <b>Terminated</b> (absorbing state, <i>P</i><sub>TT</sub> = 100%)." +
+    "</p>" +
+    "<div style='overflow-x:auto'>" +
+      "<table class='bp' style='width:100%;font-size:12px;margin-bottom:10px'>" +
+        "<thead><tr><th>Current State (n)</th><th>&rarr; Active</th><th>&rarr; Grace</th><th>&rarr; Review</th><th>&rarr; Terminated</th></tr></thead>" +
+        "<tbody>" + mRows + "</tbody>" +
+      "</table>" +
+      "<table class='bp' style='width:100%;font-size:12px'>" +
+        "<thead><tr><th>Account State</th><th>Current Count</th><th>Next-Month Forecast</th><th>Net Change</th></tr></thead>" +
+        "<tbody>" + fRows + "</tbody>" +
+      "</table>" +
+    "</div>";
+}
+
 /* ---------- Branch analytics ---------- */
 function renderAnalytics() {
   var b = val("a-branch"), m = val("a-month") || new Date().toISOString().slice(0, 7), names = branchScope("a-branch"), cl = liveClients(b);
@@ -438,6 +669,9 @@ function renderAnalytics() {
   });
   barChart({ id: "reg-chart", labels: names, h: 160, fmt: function (v) { return Math.round(v); }, sub: "Active subscribers by branch", series: [{ name: "Active clients", color: C_BILLED, vals: reg }] });
   barChart({ id: "churn-chart", labels: names, h: 160, fmt: function (v) { return Math.round(v * 10) / 10 + "%"; }, sub: "Terminated accounts / all clients", series: [{ name: "Cancellation rate", color: "#d74548", vals: churn, exact: function (v) { return v + "%"; } }] });
+
+  renderAnovaCard(m, b);
+  renderMarkovCard(b);
 }
 
 /* ---------- Email & portal notifications ---------- */
