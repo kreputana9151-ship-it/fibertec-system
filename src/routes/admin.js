@@ -12,26 +12,35 @@ const SIX = "date_trunc('month', current_date) - interval '6 months'";
 
 // GET /api/admin/clients?branch=04&status=Active
 router.get('/clients', async (req, res) => {
-  const { rows } = await query(
-    `SELECT c.account_no,
-            c.name,
-            c.address,
-            b.name AS branch,
-            p.plan_name,
-            p.monthly_rate,
-            c.status,
-            c.due_day,
-            c.email,
-            TO_CHAR(c.created_at, 'YYYY-MM-DD') AS created_at,
-            TO_CHAR(c.term_date, 'YYYY-MM-DD') AS updated_at
-       FROM clients c
-       JOIN branches b USING (branch_code)
-       JOIN plans p USING (plan_id)
-      WHERE ($1::text IS NULL OR c.branch_code=$1) AND ($2::text IS NULL OR c.status=$2)
-      ORDER BY c.branch_code, c.client_seq`,
-    [req.query.branch || null, req.query.status || null]
-  );
-  res.json(rows);
+  try {
+    const { rows } = await query(
+      `SELECT c.account_no,
+              c.name,
+              c.contact_no,
+              c.address,
+              b.name AS branch,
+              p.plan_name,
+              p.monthly_rate,
+              c.status,
+              c.status_reason,
+              c.due_day,
+              c.email,
+              TO_CHAR(c.registered_date, 'YYYY-MM-DD') AS created_at,
+              TO_CHAR(c.termination_date, 'YYYY-MM-DD') AS updated_at,
+              TO_CHAR(c.flagged_date, 'YYYY-MM-DD') AS flagged_date,
+              TO_CHAR(c.grace_end_date, 'YYYY-MM-DD') AS grace_end_date
+         FROM clients c
+         JOIN branches b USING (branch_code)
+         JOIN plans p USING (plan_id)
+        WHERE ($1::text IS NULL OR c.branch_code=$1) AND ($2::text IS NULL OR c.status=$2)
+        ORDER BY c.branch_code, c.client_seq`,
+      [req.query.branch || null, req.query.status || null]
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('GET /api/admin/clients error:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // GET /api/admin/statements?month=2026-10-01&branch=04
@@ -167,10 +176,9 @@ router.post('/users/:userId/reset-password', async (req, res) => {
   if (typeof pw !== 'string' || pw.length < 8 || pw.length > 72) return res.status(400).json({ error: 'Password must be 8 to 72 characters.' });
   const target = (await query('SELECT login_id FROM users WHERE user_id=$1', [req.params.userId])).rows[0];
   if (!target) return res.status(404).json({ error: 'Account not found' });
-  const own = Number(req.params.userId) === req.user.userId;
   await tx(async c => {
-    await c.query('UPDATE users SET password_hash=$2, must_change_password=$3 WHERE user_id=$1',
-      [req.params.userId, await require('bcrypt').hash(pw, 10), !own]);
+    await c.query('UPDATE users SET password_hash=$2 WHERE user_id=$1',
+      [req.params.userId, await require('bcrypt').hash(pw, 10)]);
     await logActivity(c, req.user.userId, null, `Reset password of ${target.login_id}`);
   });
   res.json({ ok: true });

@@ -11,17 +11,27 @@ router.use(requireAuth, requireRole('staff'));
 
 // GET /api/staff/clients?q=
 router.get('/clients', async (req, res) => {
-  const q = `%${req.query.q || ''}%`;
-  const { rows } = await query(
-    `SELECT c.account_no, c.name, c.contact_no, c.email, c.address, c.status,
-            p.plan_id, p.plan_name, p.monthly_rate, c.due_day,
-            TO_CHAR(c.created_at, 'YYYY-MM-DD') AS registered_date
-       FROM clients c JOIN plans p USING (plan_id)
-      WHERE c.branch_code=$1 AND (c.name ILIKE $2 OR c.account_no LIKE $2 OR c.email ILIKE $2)
-      ORDER BY c.client_seq`,
-    [req.user.branchCode, q]
-  );
-  res.json(rows);
+  try {
+    const q = `%${req.query.q || ''}%`;
+    const { rows } = await query(
+      `SELECT c.account_no, c.name, c.contact_no, c.email, c.address, c.status,
+              c.status_reason, c.facebook, c.router_location,
+              p.plan_id, p.plan_name, p.monthly_rate, c.due_day,
+              TO_CHAR(c.registered_date, 'YYYY-MM-DD') AS registered_date,
+              TO_CHAR(c.termination_date, 'YYYY-MM-DD') AS termination_date,
+              c.termination_reason,
+              TO_CHAR(c.flagged_date, 'YYYY-MM-DD') AS flagged_date,
+              TO_CHAR(c.grace_end_date, 'YYYY-MM-DD') AS grace_end_date
+         FROM clients c JOIN plans p USING (plan_id)
+        WHERE c.branch_code=$1 AND (c.name ILIKE $2 OR c.account_no LIKE $2 OR c.email ILIKE $2)
+        ORDER BY c.client_seq`,
+      [req.user.branchCode, q]
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('GET /api/staff/clients error:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // GET /api/staff/clients.csv  (Export CSV)
@@ -77,60 +87,32 @@ router.post('/clients', async (req, res) => {
       const accountNo = req.user.branchCode + String(reg.getFullYear() % 100).padStart(2, '0') + String(seq).padStart(4, '0');
 
       const u = await c.query(
-        `INSERT INTO users (login_id, password_hash, role, is_active, must_change_password)
-         VALUES ($1, $2, 'client', TRUE, FALSE)
+        `INSERT INTO users (login_id, password_hash, role, is_active)
+         VALUES ($1, $2, 'client', TRUE)
          RETURNING user_id`,
         [accountNo, hash]
       );
 
-      const colCheck = await c.query(
-        `SELECT column_name FROM information_schema.columns
-          WHERE table_name='clients' AND column_name='registered_date'`
+      await c.query(
+        `INSERT INTO clients (account_no, user_id, branch_code, client_seq, plan_id, name, contact_no, email, address,
+                              facebook, router_location, registered_date, due_day, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13,'Active')`,
+        [
+          accountNo,
+          u.rows[0].user_id,
+          req.user.branchCode,
+          seq,
+          planId,
+          name,
+          contactNo,
+          email,
+          address,
+          b.facebook || null,
+          b.routerLocation || b.router_location || null,
+          registeredDate,
+          reg.getDate()
+        ]
       );
-
-      if (colCheck.rows.length) {
-        await c.query(
-          `INSERT INTO clients (account_no, user_id, branch_code, client_seq, plan_id, name, contact_no, email, address,
-                                facebook, router_location, registered_date, due_day, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$12::timestamptz)`,
-          [
-            accountNo,
-            u.rows[0].user_id,
-            req.user.branchCode,
-            seq,
-            planId,
-            name,
-            contactNo,
-            email,
-            address,
-            b.facebook || null,
-            b.routerLocation || b.router_location || null,
-            registeredDate,
-            reg.getDate()
-          ]
-        );
-      } else {
-        await c.query(
-          `INSERT INTO clients (account_no, user_id, branch_code, client_seq, plan_id, name, contact_no, email, address,
-                                facebook, router_location, due_day, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::timestamptz)`,
-          [
-            accountNo,
-            u.rows[0].user_id,
-            req.user.branchCode,
-            seq,
-            planId,
-            name,
-            contactNo,
-            email,
-            address,
-            b.facebook || null,
-            b.routerLocation || b.router_location || null,
-            reg.getDate(),
-            registeredDate
-          ]
-        );
-      }
 
       await addNotice(c, {
         accountNo,
