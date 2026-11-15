@@ -17,10 +17,65 @@ function planIdForName(planName) {
   return 1;
 }
 
+function getLiveBillingSummary(accountNo, fallbackRate) {
+  var stmts = (typeof LIVE !== "undefined" && Array.isArray(LIVE.statements))
+    ? LIVE.statements.filter(function (s) { return s.acc === accountNo; })
+    : [];
+  var pays = (typeof LIVE !== "undefined" && Array.isArray(LIVE.payments))
+    ? LIVE.payments.filter(function (p) { return p.acc === accountNo; })
+    : [];
+
+  if (!stmts.length) return null;
+
+  stmts.sort(function (a, b) {
+    return (b.month || b.due || "").localeCompare(a.month || a.due || "");
+  });
+  var latest = stmts[0];
+
+  var totalBilled = 0;
+  var totalPaidFromStmts = 0;
+  stmts.forEach(function (s) {
+    totalBilled += Number(s.amount || 0);
+    totalPaidFromStmts += Number(s.paid || 0);
+  });
+
+  var totalVerifiedPays = 0;
+  var hasPending = false;
+  pays.forEach(function (p) {
+    if (p.status === "Verified") totalVerifiedPays += Number(p.amount || 0);
+    if (p.status === "Pending") hasPending = true;
+  });
+
+  var effectivePaid = Math.max(totalPaidFromStmts, totalVerifiedPays);
+  var balance = Math.max(0, totalBilled - effectivePaid);
+  var latestBalance = Math.max(0, Number(latest.amount || 0) - Number(latest.paid || 0));
+
+  var payStatus = "Paid";
+  if (balance > 0 && latestBalance > 0) {
+    payStatus = hasPending ? "Pending" : (effectivePaid > 0 && latest.paid > 0 ? "Partial" : "Unpaid");
+  }
+
+  return {
+    latest: latest,
+    dueISO: latest.due || "",
+    pay: payStatus,
+    balance: balance
+  };
+}
+
 function getAllActiveClients() {
   if (isAdmin() && typeof LIVE !== "undefined" && LIVE.loaded && Array.isArray(LIVE.clients)) {
     return LIVE.clients.map(function (c) {
       var base = (typeof clientByNo === "function" ? clientByNo(c.no) : null) || {};
+      var liveBill = getLiveBillingSummary(c.no, c.rate);
+
+      var graceEnd = c.grace_end_date || base.graceEnd || "";
+      var graceLeft = base.graceLeft || 0;
+      if (graceEnd) {
+        var diffMs = new Date(graceEnd + "T23:59:59") - new Date();
+        graceLeft = Math.max(0, Math.ceil(diffMs / 86400000));
+      }
+
       return Object.assign({}, base, {
         no: c.no,
         name: c.name,
@@ -31,15 +86,15 @@ function getAllActiveClients() {
         rate: Number(c.rate || base.rate || 0),
         status: c.status,
         due: Number(c.due_day || base.due || 15),
-        dueISO: base.dueISO || "",
-        pay: base.pay || "Paid",
-        balance: Number(base.balance || 0),
-        graceEnd: base.graceEnd || "",
-        graceLeft: base.graceLeft || 0,
-        reason: base.reason || "Client Cancellation Request",
-        flagged: base.flagged || "",
+        dueISO: liveBill ? liveBill.dueISO : "",
+        pay: liveBill ? liveBill.pay : "Paid",
+        balance: liveBill ? liveBill.balance : 0,
+        graceEnd: graceEnd,
+        graceLeft: graceLeft,
+        reason: c.status_reason || base.reason || "Overdue Balance",
+        flagged: c.flagged_date || base.flagged || "",
         termDate: c.terminated_month ? c.terminated_month + "-01" : (base.termDate || ""),
-        termReason: base.termReason || "Terminated",
+        termReason: c.status_reason || base.termReason || "Terminated",
         installed: c.created_month ? c.created_month + "-01" : (base.installed || ""),
         address: c.address || base.address || "",
         fb: base.fb || "",
@@ -307,8 +362,9 @@ function findClientRecord(no) {
 function viewClient(no) {
   var c = findClientRecord(no);
   if (!c) { toast("Client record not found.", "error"); return; }
-  var s = (typeof statement === "function" && typeof clientByNo === "function" && clientByNo(no))
-    ? statement(clientByNo(no), "2026-10")
+  var liveBill = getLiveBillingSummary(no, c.rate);
+  var s = liveBill && liveBill.latest
+    ? { inv: liveBill.latest.inv || "—", bill: liveBill.latest.bill || c.installed || "", due: liveBill.latest.due || "", paid: liveBill.latest.paid || 0, amount: liveBill.latest.amount || c.rate || 0 }
     : { inv: "—", bill: c.installed || "", due: c.dueISO || "", paid: 0, amount: c.rate || 0 };
   var extra = "";
   if (c.status == "Under Review") extra = "<div class='cd-note'><div class='warn amber'><b>Under Review</b> &middot; " + esc(c.reason) + " &middot; flagged " + fmtD(c.flagged) + (isAdmin() ? "" : ". Waiting for an administrator's decision.") + "</div></div>";

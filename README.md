@@ -1,3 +1,30 @@
+## Group Setup & Testing Guide (FiberTec ISP Management System)
+
+### Option A: Live Website Testing (Walang Install, Browser Lang)
+Kung gusto niyo lang i-test ang system sa browser nang hindi nagda-download ng code, buksan lang ito:
+- **Live Link:** https://fibertec-system.onrender.com/index.html
+
+*(Note: Naka-connect na ito sa shared Neon PostgreSQL database at Brevo email service natin. Kapag may nag-add/edit ng data, makikita agad ng lahat.)*
+
+---
+
+### Option B: Paano I-run ang System sa Sariling Laptop (VS Code)
+
+#### Step 1: I-check ang Requirements
+Siguraduhing naka-install na sa laptop mo ang dalawang ito bago magsimula:
+- **Node.js (LTS version)**
+- **Git**
+- **Visual Studio Code (VS Code)**
+
+#### Step 2: I-download (Clone) ang Project
+1. Magbukas ng **VS Code**.
+2. Buksan ang Terminal sa loob ng VS Code (`Ctrl + ~` o click **Terminal → New Terminal** sa itaas).
+3. I-type at i-enter ang mga commands na ito nang sunod-sunod:
+   ```bash
+   git clone [https://github.com/kreputana9151-ship-it/fibertec-system.git](https://github.com/kreputana9151-ship-it/fibertec-system.git)
+   cd fibertec-system
+   npm install
+
 # FiberTec ISP Management System
 
 Billing system para sa FiberTec IT Solutions: web app (HTML/CSS/JS) + REST API (Node + Express + PostgreSQL) sa **iisang project**. Isang server lang ang tumatakbo; siya na rin ang nagse-serve ng frontend.
