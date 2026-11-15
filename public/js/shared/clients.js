@@ -155,12 +155,146 @@ function renderClients() {
   $("client-foot").innerHTML = footHTML("clients", info, renderClients);
 }
 
+/* ---------- Direct PDF Export (Admin & Staff) ---------- */
+function pdfEscapeText(str) {
+  return String(str == null ? "" : str)
+    .replace(/[^\x20-\x7E]/g, " ")
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)");
+}
+
+function downloadTablePDF(filename, title, subtitle, headers, rows) {
+  var pageW = 792, pageH = 612; // Landscape Letter (11 x 8.5 in)
+  var marginX = 36, startY = 530, rowH = 20, maxRowsPerPage = 21;
+  var usableW = pageW - marginX * 2;
+  var colW = usableW / headers.length;
+
+  var chunks = [];
+  if (!rows.length) {
+    chunks.push([]);
+  } else {
+    for (var i = 0; i < rows.length; i += maxRowsPerPage) {
+      chunks.push(rows.slice(i, i + maxRowsPerPage));
+    }
+  }
+
+  var objects = [];
+  function addObj(body) {
+    objects.push(body);
+    return objects.length;
+  }
+
+  var catalogId = addObj("");
+  var pagesId = addObj("");
+  var fontRegId = addObj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  var fontBoldId = addObj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+
+  var pageIds = [];
+  chunks.forEach(function (pageRows, pageIdx) {
+    var ops = [];
+
+    // Header banner
+    ops.push("0 0.255 0.486 rg");
+    ops.push(marginX + " 552 " + usableW + " 34 re f");
+    ops.push("1 1 1 rg");
+    ops.push("BT /F2 13 Tf " + (marginX + 12) + " 565 Td (" + pdfEscapeText("FiberTec IT Solutions - " + title) + ") Tj ET");
+    ops.push("BT /F1 9 Tf " + (pageW - marginX - 110) + " 566 Td (" + pdfEscapeText("Page " + (pageIdx + 1) + " of " + chunks.length) + ") Tj ET");
+
+    // Subtitle & timestamp
+    ops.push("0.25 0.32 0.42 rg");
+    ops.push("BT /F1 9 Tf " + marginX + " 538 Td (" + pdfEscapeText(subtitle + "  |  Generated: " + new Date().toLocaleString()) + ") Tj ET");
+
+    // Table header row
+    var y = startY - 18;
+    ops.push("0.91 0.94 0.98 rg");
+    ops.push(marginX + " " + (y - 5) + " " + usableW + " " + rowH + " re f");
+    ops.push("0 0.18 0.43 rg");
+    headers.forEach(function (h, cIdx) {
+      var x = marginX + cIdx * colW + 4;
+      var maxChars = Math.max(8, Math.floor((colW - 8) / 5.2));
+      ops.push("BT /F2 8.5 Tf " + x.toFixed(1) + " " + (y + 2) + " Td (" + pdfEscapeText(String(h).slice(0, maxChars)) + ") Tj ET");
+    });
+
+    // Table rows
+    if (!pageRows.length) {
+      y -= rowH;
+      ops.push("0.4 0.4 0.4 rg");
+      ops.push("BT /F1 9 Tf " + (marginX + 6) + " " + (y + 2) + " Td (No records match the current filter.) Tj ET");
+    } else {
+      pageRows.forEach(function (r, rIdx) {
+        y -= rowH;
+        if (rIdx % 2 === 1) {
+          ops.push("0.97 0.98 0.99 rg");
+          ops.push(marginX + " " + (y - 5) + " " + usableW + " " + rowH + " re f");
+        }
+        ops.push("0.85 0.88 0.92 RG 0.5 w");
+        ops.push(marginX + " " + (y - 5) + " m " + (marginX + usableW) + " " + (y - 5) + " l S");
+
+        ops.push("0.1 0.12 0.16 rg");
+        r.forEach(function (cell, cIdx) {
+          var x = marginX + cIdx * colW + 4;
+          var maxChars = Math.max(8, Math.floor((colW - 8) / 5.0));
+          var txt = String(cell == null ? "—" : cell).slice(0, maxChars);
+          ops.push("BT /F1 8 Tf " + x.toFixed(1) + " " + (y + 2) + " Td (" + pdfEscapeText(txt) + ") Tj ET");
+        });
+      });
+    }
+
+    var streamData = ops.join("\n");
+    var contentId = addObj("<< /Length " + streamData.length + " >>\nstream\n" + streamData + "\nendstream");
+    var pageId = addObj(
+      "<< /Type /Page /Parent " + pagesId + " 0 R " +
+      "/MediaBox [0 0 " + pageW + " " + pageH + "] " +
+      "/Resources << /Font << /F1 " + fontRegId + " 0 R /F2 " + fontBoldId + " 0 R >> >> " +
+      "/Contents " + contentId + " 0 R >>"
+    );
+    pageIds.push(pageId);
+  });
+
+  objects[catalogId - 1] = "<< /Type /Catalog /Pages " + pagesId + " 0 R >>";
+  objects[pagesId - 1] = "<< /Type /Pages /Kids [" + pageIds.map(function (id) { return id + " 0 R"; }).join(" ") + "] /Count " + pageIds.length + " >>";
+
+  var pdf = "%PDF-1.4\n";
+  var offsets = [0];
+  for (var idx = 0; idx < objects.length; idx++) {
+    offsets.push(pdf.length);
+    pdf += (idx + 1) + " 0 obj\n" + objects[idx] + "\nendobj\n";
+  }
+  var xrefStart = pdf.length;
+  pdf += "xref\n0 " + (objects.length + 1) + "\n";
+  pdf += "0000000000 65535 f \n";
+  for (var k = 1; k < offsets.length; k++) {
+    pdf += String(offsets[k]).padStart(10, "0") + " 00000 n \n";
+  }
+  pdf += "trailer\n<< /Size " + (objects.length + 1) + " /Root " + catalogId + " 0 R >>\nstartxref\n" + xrefStart + "\n%%EOF";
+
+  var blob = new Blob([pdf], { type: "application/pdf" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+}
+
 function exportClients() {
   var rows = clientFilters(false);
-  downloadCSV("fibertec-clients.csv", [["Account No.", "Client Name", "Contact No.", "Email", "Branch", "Plan", "Status", "Payment Status"]].concat(rows.map(function (c) {
-    return [c.no, c.name, c.contact, c.email, c.branch, c.plan, c.status, c.pay];
-  })));
-  toast("Exported " + rows.length + " clients to CSV.");
+  var scope = isAdmin() ? (val("f-branch") || "All Branches") : (STAFF_BRANCH || "Branch");
+  var headers = ["Account No.", "Client Name", "Contact No.", "Email", "Branch", "Plan", "Status"];
+  var data = rows.map(function (c) {
+    return [c.no, c.name, c.contact || "—", c.email || "—", c.branch, c.plan, c.status];
+  });
+  downloadTablePDF(
+    "fibertec-clients.pdf",
+    "Subscriber Directory (" + scope + ")",
+    "Filter: " + CV.tab + "  |  Total Subscribers: " + rows.length,
+    headers,
+    data
+  );
+  toast("Exported " + rows.length + " clients to PDF.");
 }
 
 /* ---------- View details (read-only; used by both portals) ---------- */
