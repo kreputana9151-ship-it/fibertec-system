@@ -1,6 +1,5 @@
 const router = require('express').Router();
 const bcrypt = require('bcrypt');
-const crypto = require('crypto');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { query, tx } = require('../db');
 const { applyVerifiedPayment } = require('../services/billing');
@@ -14,10 +13,14 @@ router.use(requireAuth, requireRole('staff'));
 router.get('/clients', async (req, res) => {
   const q = `%${req.query.q || ''}%`;
   const { rows } = await query(
-    `SELECT c.account_no, c.name, c.contact_no, c.email, c.status, p.plan_name, c.due_day
+    `SELECT c.account_no, c.name, c.contact_no, c.email, c.address, c.status,
+            p.plan_id, p.plan_name, p.monthly_rate, c.due_day,
+            TO_CHAR(COALESCE(c.registered_date, c.created_at::date), 'YYYY-MM-DD') AS registered_date
        FROM clients c JOIN plans p USING (plan_id)
-      WHERE c.branch_code=$1 AND (c.name ILIKE $2 OR c.account_no LIKE $2)
-      ORDER BY c.client_seq`, [req.user.branchCode, q]);
+      WHERE c.branch_code=$1 AND (c.name ILIKE $2 OR c.account_no LIKE $2 OR c.email ILIKE $2)
+      ORDER BY c.client_seq`,
+    [req.user.branchCode, q]
+  );
   res.json(rows);
 });
 
@@ -25,40 +28,104 @@ router.get('/clients', async (req, res) => {
 router.get('/clients.csv', async (req, res) => {
   const { rows } = await query(
     `SELECT c.account_no, c.name, c.contact_no, c.email, p.plan_name, c.status
-       FROM clients c JOIN plans p USING (plan_id) WHERE c.branch_code=$1 ORDER BY c.client_seq`, [req.user.branchCode]);
+       FROM clients c JOIN plans p USING (plan_id) WHERE c.branch_code=$1 ORDER BY c.client_seq`,
+    [req.user.branchCode]
+  );
   const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const csv = ['account_no,name,contact_no,email,plan,status', ...rows.map(r => Object.values(r).map(esc).join(','))].join('\n');
   res.type('text/csv').attachment(`clients_${req.user.branchCode}.csv`).send(csv);
 });
 
-// POST /api/staff/clients  -> register a client in the staff's own branch
+// POST /api/staff/clients  -> register a client in the staff's own branch with staff-assigned email & password
 router.post('/clients', async (req, res) => {
   const b = req.body || {};
-  if (!b.name || !b.contactNo || !b.email || !b.address || !b.planId || !b.registeredDate)
-    return res.status(400).json({ error: 'Missing required fields' });
-  const reg = new Date(b.registeredDate);
-  const tempPassword = crypto.randomBytes(5).toString('hex');
-  const hash = await bcrypt.hash(tempPassword, 10);
+  const name = String(b.name || '').trim();
+  const contactNo = String(b.contactNo || b.contact_no || '').trim();
+  const email = String(b.email || '').trim().toLowerCase();
+  const password = String(b.password || '');
+  const address = String(b.address || '').trim();
+  const planId = b.planId || b.plan_id;
+  const registeredDate = b.registeredDate || b.registered_date || new Date().toISOString().slice(0, 10);
+
+  if (!name || !contactNo || !email || !address || !planId || !registeredDate) {
+    return res.status(400).json({ error: 'Please complete all required client details (name, contact number, email, address, plan, and registration date).' });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Please enter a valid client email address.' });
+  }
+  if (password.length < 8 || password.length > 72) {
+    return res.status(400).json({ error: 'Client portal password must be between 8 and 72 characters.' });
+  }
+
+  const reg = new Date(registeredDate);
+  if (isNaN(reg.getTime())) {
+    return res.status(400).json({ error: 'Invalid registration date.' });
+  }
+
+  const hash = await bcrypt.hash(password, 10);
 
   try {
     const out = await tx(async c => {
+      const dup = await c.query('SELECT 1 FROM clients WHERE LOWER(email) = $1 LIMIT 1', [email]);
+      if (dup.rows.length) {
+        throw new Error('A client account with this email address already exists.');
+      }
+
       await c.query('SELECT pg_advisory_xact_lock($1)', [Number(req.user.branchCode)]);
       const seq = (await c.query('SELECT COALESCE(MAX(client_seq),0)+1 AS n FROM clients WHERE branch_code=$1', [req.user.branchCode])).rows[0].n;
       if (seq > 9999) throw new Error('Branch is full (9999 clients)');
       const accountNo = req.user.branchCode + String(reg.getFullYear() % 100).padStart(2, '0') + String(seq).padStart(4, '0');
 
-      const u = await c.query("INSERT INTO users (login_id, password_hash, role) VALUES ($1,$2,'client') RETURNING user_id", [accountNo, hash]);
+      const u = await c.query(
+        `INSERT INTO users (login_id, password_hash, role, is_active, must_change_password)
+         VALUES ($1, $2, 'client', TRUE, FALSE)
+         RETURNING user_id`,
+        [accountNo, hash]
+      );
+
       await c.query(
         `INSERT INTO clients (account_no, user_id, branch_code, client_seq, plan_id, name, contact_no, email, address,
-                              facebook, router_location, registered_date, due_day)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-        [accountNo, u.rows[0].user_id, req.user.branchCode, seq, b.planId, b.name, b.contactNo, b.email, b.address,
-         b.facebook || null, b.routerLocation || null, b.registeredDate, reg.getDate()]);
-      await logActivity(c, req.user.userId, req.user.branchCode, `Registered client ${accountNo} (${b.name})`);
-      return accountNo;
+                              facebook, router_location, registered_date, due_day, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$12::timestamptz)`,
+        [
+          accountNo,
+          u.rows[0].user_id,
+          req.user.branchCode,
+          seq,
+          planId,
+          name,
+          contactNo,
+          email,
+          address,
+          b.facebook || null,
+          b.routerLocation || b.router_location || null,
+          registeredDate,
+          reg.getDate()
+        ]
+      );
+
+      await addNotice(c, {
+        accountNo,
+        type: 'System Notice',
+        channel: 'Portal Notification',
+        status: 'Sent',
+        message: `Welcome to FiberTec! Your Account No. is ${accountNo}. Use your registered email (${email}) or Account No. to sign in.`
+      });
+
+      await logActivity(c, req.user.userId, req.user.branchCode, `Registered client ${accountNo} (${name}) with portal credentials`);
+      return { accountNo, email, name };
     });
-    res.status(201).json({ accountNo: out, tempPassword });
-  } catch (e) { console.error(e); res.status(400).json({ error: e.message }); }
+
+    res.status(201).json({
+      ok: true,
+      accountNo: out.accountNo,
+      email: out.email,
+      message: `Client ${out.name} (${out.accountNo}) registered successfully. Portal login is now active.`
+    });
+  } catch (e) {
+    console.error('POST /api/staff/clients error:', e);
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // ---- Payments Verification Queue: single-server FIFO (M/M/1) ----
@@ -67,7 +134,9 @@ async function lockQueue(c, branchCode) { await c.query('SELECT pg_advisory_xact
 async function assertHead(c, branchCode, id) {
   const h = (await c.query(`SELECT p.payment_id FROM payments p JOIN clients cl USING (account_no)
                              WHERE cl.branch_code=$1 AND p.status='Pending' ${FIFO_ORDER} LIMIT 1`, [branchCode])).rows[0];
-  if (!h || Number(h.payment_id) !== Number(id)) throw Object.assign(new Error('FIFO: process Queue #1 (the oldest pending payment) first'), { status: 409 });
+  if (!h || Number(h.payment_id) !== Number(id)) {
+    throw Object.assign(new Error('FIFO Queue Rule: Please process Queue #1 (the oldest pending payment) first.'), { status: 409 });
+  }
 }
 
 // GET /api/staff/payments/queue
@@ -88,10 +157,17 @@ router.get('/payments/queue', async (req, res) => {
        FROM done`, [bc])).rows[0];
   const lambda = Number(m.arrivals_last_hour), svc = m.avg_service_seconds === null ? null : Number(m.avg_service_seconds);
   const mu = svc ? 3600 / svc : null;
-  res.json({ queue: q, metrics: {
-    Lq: q.length, lambda_per_hour: lambda, mu_per_hour: mu, rho: mu ? lambda / mu : null,
-    avg_wait_seconds: q.length ? q.reduce((a, r) => a + r.waiting_seconds, 0) / q.length : 0,
-    longest_wait_seconds: q.length ? q[0].waiting_seconds : 0 } });
+  res.json({
+    queue: q,
+    metrics: {
+      Lq: q.length,
+      lambda_per_hour: lambda,
+      mu_per_hour: mu,
+      rho: mu ? lambda / mu : null,
+      avg_wait_seconds: q.length ? q.reduce((a, r) => a + r.waiting_seconds, 0) / q.length : 0,
+      longest_wait_seconds: q.length ? q[0].waiting_seconds : 0
+    }
+  });
 });
 
 // GET /api/staff/statements/open?q=
@@ -121,51 +197,54 @@ router.post('/payments/cash', async (req, res) => {
       const s = (await c.query(
         `SELECT s.* FROM statements s JOIN clients cl USING (account_no)
           WHERE s.statement_id=$1 AND cl.branch_code=$2`, [statementId, req.user.branchCode])).rows[0];
-      if (!s) throw new Error('Statement not found in your branch');
+      if (!s) throw new Error('Statement not found in your branch.');
       const amt = Number(amount);
-      if (!(amt > 0) || amt > Number(s.balance)) throw new Error('Invalid amount');
+      if (!(amt > 0) || amt > Number(s.balance)) throw new Error('Payment amount must be greater than 0 and not exceed the remaining balance.');
       const pastDue = new Date(s.due_date) < new Date(new Date().toDateString());
       const isFull = amt === Number(s.balance);
-      if (pastDue && !isFull) throw new Error('After the due date the full balance is required');
+      if (pastDue && !isFull) throw new Error('Account is past due: full remaining balance is required.');
       const p = await c.query(
         `INSERT INTO payments (statement_id, account_no, amount, method, payment_type, or_no, payment_date)
          VALUES ($1,$2,$3,'Cash',$4,$5,current_date) RETURNING payment_id`,
         [statementId, s.account_no, amt, isFull ? 'Full payment' : 'Partial payment', orNo || null]);
       return applyVerifiedPayment(c, p.rows[0].payment_id, req.user.userId, req.user.branchCode);
     });
-    res.status(201).json({ orNo: out });
+    res.status(201).json({ ok: true, orNo: out, message: `Cash payment recorded and verified (O.R. ${out}).` });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// PATCH /api/staff/payments/:id/verify  |  /reject
+// PATCH /api/staff/payments/:id/verify
 router.patch('/payments/:id/verify', async (req, res) => {
   try {
     const orNo = await tx(async c => {
-      await lockQueue(c, req.user.branchCode); await assertHead(c, req.user.branchCode, req.params.id);
+      await lockQueue(c, req.user.branchCode);
+      await assertHead(c, req.user.branchCode, req.params.id);
       const p = (await c.query(
         `SELECT p.* FROM payments p JOIN clients cl USING (account_no)
           WHERE p.payment_id=$1 AND cl.branch_code=$2 AND p.status='Pending' FOR UPDATE OF p`,
         [req.params.id, req.user.branchCode])).rows[0];
-      if (!p) throw new Error('Pending payment not found in your branch');
+      if (!p) throw new Error('Pending payment not found in your branch.');
       return applyVerifiedPayment(c, p.payment_id, req.user.userId, req.user.branchCode);
     });
-    res.json({ orNo });
+    res.json({ ok: true, orNo, message: `Payment verified successfully (O.R. ${orNo}).` });
     deliverPendingEmails().catch(e => console.error(e));
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 
+// PATCH /api/staff/payments/:id/reject
 router.patch('/payments/:id/reject', async (req, res) => {
   try {
     await tx(async c => {
-      await lockQueue(c, req.user.branchCode); await assertHead(c, req.user.branchCode, req.params.id);
+      await lockQueue(c, req.user.branchCode);
+      await assertHead(c, req.user.branchCode, req.params.id);
       const r = (await c.query(`UPDATE payments SET status='Rejected', verified_by_staff=$2, verified_at=now() WHERE payment_id=$1
                                 RETURNING account_no, statement_id, reference_no`, [req.params.id, req.user.userId])).rows[0];
-      const msg = `we could not match GCash reference ${r.reference_no} to your payment, so it was not accepted. Please check the number and submit your payment again.`;
+      const msg = `We could not match GCash reference ${r.reference_no} to your payment, so it was not accepted. Please check the reference number and submit your payment again.`;
       await addNotice(c, { accountNo: r.account_no, statementId: r.statement_id, type: 'System Notice', channel: 'Portal Notification', status: 'Sent', message: msg });
       await addNotice(c, { accountNo: r.account_no, statementId: r.statement_id, type: 'System Notice', channel: 'Email', status: 'Pending', message: msg });
       await logActivity(c, req.user.userId, req.user.branchCode, `Rejected payment #${req.params.id}`);
     });
-    res.json({ ok: true });
+    res.json({ ok: true, message: 'Payment rejected and client notified.' });
     deliverPendingEmails().catch(e => console.error(e));
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
@@ -180,22 +259,28 @@ router.get('/cancellations', async (req, res) => {
 
 router.patch('/cancellations/:id', async (req, res) => {
   try {
+    const approve = !!req.body.approve;
     await tx(async c => {
       const r = (await c.query(
         `SELECT r.* FROM cancellation_requests r JOIN clients cl USING (account_no)
           WHERE r.request_id=$1 AND cl.branch_code=$2 AND r.status='Pending' FOR UPDATE OF r`,
         [req.params.id, req.user.branchCode])).rows[0];
-      if (!r) throw new Error('Pending request not found in your branch');
-      const approve = !!req.body.approve;
+      if (!r) throw new Error('Pending cancellation request not found in your branch.');
       await c.query(
         'UPDATE cancellation_requests SET status=$2, decided_by_staff=$3, decided_at=now() WHERE request_id=$1',
         [r.request_id, approve ? 'Approved' : 'Rejected', req.user.userId]);
-      if (approve)
+      if (approve) {
         await changeStatus(c, r.account_no, 'Terminated', 'Cancellation approved', req.user.userId,
           { termDate: new Date().toISOString().slice(0, 10), termReason: 'Client cancellation' });
+      }
       await logActivity(c, req.user.userId, req.user.branchCode, `${approve ? 'Approved' : 'Rejected'} cancellation of ${r.account_no}`);
     });
-    res.json({ ok: true });
+    res.json({
+      ok: true,
+      message: approve
+        ? 'Cancellation request approved and subscriber account terminated.'
+        : 'Cancellation request rejected; subscriber remains active.'
+    });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
