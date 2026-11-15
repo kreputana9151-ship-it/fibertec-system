@@ -1,10 +1,10 @@
 # FiberTec ISP Management System
 
-Billing system para sa FiberTec IT Solutions: web app (HTML/CSS/JS) + REST API (Node + Express + PostgreSQL) sa **iisang project**. Isang server lang ang tumatakbo; siya na rin ang nagse-serve ng frontend.
+Billing system para sa FiberTec IT Solutions: web app (HTML/CSS/JS) + REST API (Node + Express + PostgreSQL)
 
 ---
 
-## Group Setup & Testing Guide (Para sa mga Kagrupo)
+## Group Setup & Testing Guide
 
 ### Option A: Live Website Testing (Walang Install, Browser Lang)
 Kung gusto niyo lang i-test ang system sa browser nang hindi nagda-download ng code, buksan lang ang live link na ito:
@@ -168,6 +168,7 @@ git push
 
 ## Login accounts and password reset
 | Who | Username | Notes |
+|---|---|---|
 | Client | 8-digit account no. **or** email | registered by branch staff |
 | Staff | `bagongilog`, `caniogan`, `palatiw`, `maybungabliss3`, `bliss1`, `nagpayong` | one login per branch, locked to that branch |
 | Owner/Admin | `rguerrero` (Ramon Guerrero) | sees all branches |
