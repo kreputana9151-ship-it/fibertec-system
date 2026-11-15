@@ -32,11 +32,47 @@ function branchNameForCode(code) {
   return BRANCH_MAP[code] || code || "";
 }
 
+function getAuthToken() {
+  var directKeys = ["token", "jwt", "authToken", "ft_token", "fibertec_token"];
+  var stores = [window.localStorage, window.sessionStorage];
+
+  for (var s = 0; s < stores.length; s++) {
+    var store = stores[s];
+    if (!store) continue;
+
+    for (var i = 0; i < directKeys.length; i++) {
+      var val = store.getItem(directKeys[i]);
+      if (val && val.split(".").length === 3) return val;
+    }
+
+    for (var j = 0; j < store.length; j++) {
+      var key = store.key(j);
+      var raw = store.getItem(key);
+      if (!raw) continue;
+      if (raw.split(".").length === 3 && raw.indexOf("eyJ") === 0) return raw;
+      if (raw.charAt(0) === "{") {
+        try {
+          var parsed = JSON.parse(raw);
+          if (parsed && typeof parsed.token === "string" && parsed.token.split(".").length === 3) {
+            return parsed.token;
+          }
+        } catch (err) {}
+      }
+    }
+  }
+  return "";
+}
+
 async function adminApi(path, opts) {
-  var res = await fetch("/api/admin" + path, Object.assign({
-    headers: { "Content-Type": "application/json" },
-    credentials: "same-origin"
-  }, opts || {}));
+  opts = opts || {};
+  var token = getAuthToken();
+  var headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+  if (token && !headers["Authorization"]) {
+    headers["Authorization"] = "Bearer " + token;
+  }
+
+  var fetchOpts = Object.assign({ credentials: "same-origin" }, opts, { headers: headers });
+  var res = await fetch("/api/admin" + path, fetchOpts);
   var data = await res.json().catch(function () { return {}; });
   if (!res.ok) throw new Error(data.error || ("Request failed (" + res.status + ")"));
   return data;
