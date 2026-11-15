@@ -27,11 +27,58 @@ Siguraduhing naka-install na sa laptop mo ang dalawang ito bago magsimula:
 
 # FiberTec ISP Management System
 
-Billing system para sa FiberTec IT Solutions: web app (HTML/CSS/JS) + REST API (Node + Express + PostgreSQL) sa **iisang project**. Isang server lang ang tumatakbo; siya na rin ang nagse-serve ng frontend.
+Billing system para sa FiberTec IT Solutions: web app (HTML/CSS/JS) + REST API (Node + Express + PostgreSQL)
+
+---
+
+## Group Setup & Testing Guide
+
+### Option A: Live Website Testing (Walang Install, Browser Lang)
+Kung gusto niyo lang i-test ang system sa browser nang hindi nagda-download ng code, buksan lang ang live link na ito:
+- **Live Link:** https://fibertec-system.onrender.com/index.html
+
+*(Note: Naka-connect na ito sa shared Neon PostgreSQL database at Brevo email service natin. Kapag may nag-add o nag-edit ng data, makikita agad ng lahat.)*
+
+---
+
+### Option B: Paano I-run ang System sa Sariling Laptop (VS Code)
+
+#### Step 1: I-check ang Requirements
+Siguraduhing naka-install na sa laptop mo ang mga ito bago magsimula:
+- **Node.js (v18+ LTS)**
+- **Git**
+- **Visual Studio Code (VS Code)**
+
+#### Step 2: I-download (Clone) ang Project
+1. Magbukas ng **VS Code**.
+2. Buksan ang Terminal sa loob ng VS Code (`Ctrl + ~` o click **Terminal → New Terminal** sa itaas).
+3. I-type at i-enter ang mga commands na ito nang sunod-sunod:
+   ```bash
+   git clone git clone https://github.com/kreputana9151-ship-it/fibertec-system.git
+   cd fibertec-system
+   npm install
+   ```
+
+#### Step 3: Gumawa ng `.env` File (Importante!)
+1. Sa kaliwang panel ng VS Code (Explorer), gumawa ng bagong file sa loob mismo ng `fibertec-system` folder at pangalanan itong **`.env`** (dapat may tuldok sa unahan, walang ibang pangalan).
+2. Kopyahin ang format mula sa `.env.example` at i-paste sa `.env`.
+3. **I-message si Kezia** para makuha ang tunay na `.env` values (`DATABASE_URL`, `JWT_SECRET`, `BREVO_API_KEY`, `MAIL_FROM`). Naka-connect na ito sa shared Neon database at Brevo email natin, kaya hindi niyo na kailangang gumawa ng local database sa pgAdmin.
+4. I-paste ang values sa `.env` at i-save (`Ctrl + S`).
+
+#### Step 4: Generate HTTPS Cert & Run Server
+1. Sa VS Code Terminal, i-type at i-enter:
+   ```bash
+   npm run cert
+   npm start
+   ```
+2. Buksan sa browser ang **`https://localhost:3000/index.html`** (o **`http://localhost:3000/index.html`**).
+   *(Note: Sa unang bukas ng `https://localhost:3000`, magwa-warning ang browser ng "Your connection is not private" dahil self-signed ang local cert. I-click lang ang **Advanced → Proceed to localhost**.)*
+
+---
 
 ## Project structure
 
-```
+```text
 fibertec-system/
 ├── public/                  Frontend (ito yung makikita sa browser)
 │   ├── index.html           Login
@@ -58,28 +105,28 @@ fibertec-system/
 ```
 
 ## Requirements
-Node.js v18+, PostgreSQL, Git
+Node.js v18+, PostgreSQL (Neon Cloud o Local), Git
 
-## Setup
+## Local Offline Setup (Kung Gagamit ng Sariling Local pgAdmin Database)
 
 1. Clone:
-   ```
-   git clone https://github.com/kreputana9151-ship-it/fibertec-system.git
+   ```bash
+   git clone [https://github.com/kreputana9151-ship-it/fibertec-system.git](https://github.com/kreputana9151-ship-it/fibertec-system.git)
    cd fibertec-system
    ```
 2. Database: gumawa ng database na `fibertec` sa pgAdmin, tapos i-run ang `database/schema.sql` sa Query Tool.
 3. Environment: kopyahin ang `.env.example` papuntang `.env` at ilagay ang sarili mong `DATABASE_URL` (password mo) at `JWT_SECRET` (mahabang random string). Huwag i-commit ang `.env`.
 4. Install at seed:
-   ```
+   ```bash
    npm install
    npm run seed
    ```
 5. HTTPS certificate (isang beses lang):
-   ```
+   ```bash
    npm run cert
    ```
 6. Run:
-   ```
+   ```bash
    npm run dev
    ```
    Buksan ang **https://localhost:3000**. Health check: https://localhost:3000/api/health
@@ -110,8 +157,6 @@ const res = await fetch('/api/auth/login', {
 
 Para sa protected routes, isama ang token: `headers: { 'Authorization': 'Bearer ' + token }`. Pag naka-https ang page pero `http://` ang tinatawag na API, iba-block yan ng browser (mixed content), kaya laging relative path.
 
-> **Status:** ang frontend ngayon ay tumatakbo pa sa demo data (`public/js/core/data.js` + localStorage) at wala pang `fetch()` papunta sa API. Kapag naikabit na ang bawat page sa API, pwede nang tanggalin ang `data.js`.
-
 ## API endpoints
 Lahat JSON, may `Authorization: Bearer <token>` (maliban sa login).
 
@@ -141,7 +186,7 @@ Lahat JSON, may `Authorization: Bearer <token>` (maliban sa login).
 - Client history 3 months (views), admin 6 months, older rows deleted daily by `purge_old_records()`
 
 ## Daily Git commands
-```
+```bash
 git pull
 git add .
 git commit -m "Describe your changes"
@@ -157,7 +202,7 @@ git push
 
 - Passwords are stored as bcrypt hashes (never plain text). Starting password for the seeded accounts = `SEED_PASSWORD` in `.env`.
 - Owner resets anyone's password (client, staff, or own): `POST /api/admin/users/:userId/reset-password {newPassword}` (find the user with `GET /api/admin/users?q=...`). The person must set their own password at next login.
-- Clients use **Forgot password?** on the login page to get an email link (valid 30 minutes). Staff/admin ask the owner. Emails only print to the server console until SMTP is set up in `services/mailer.js`.
+- Clients use **Forgot password?** on the login page to get an email link (valid 30 minutes). Staff/admin ask the owner.
 - Already ran the old `schema.sql`? Run `database/migrate_login_update.sql` once, then `npm run seed` is not needed again.
 
 ## Custom address (instead of localhost:3000)
