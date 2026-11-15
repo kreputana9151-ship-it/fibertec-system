@@ -27,7 +27,7 @@ Siguraduhing naka-install na sa laptop mo ang mga ito bago magsimula:
 2. Buksan ang Terminal sa loob ng VS Code (`Ctrl + ~` o click **Terminal → New Terminal** sa itaas).
 3. I-type at i-enter ang mga commands na ito nang sunod-sunod:
    ```bash
-   git clone [https://github.com/kreputana9151-ship-it/fibertec-system.git](https://github.com/kreputana9151-ship-it/fibertec-system.git)
+   git clone git clone https://github.com/kreputana9151-ship-it/fibertec-system.git
    cd fibertec-system
    npm install
    ```
