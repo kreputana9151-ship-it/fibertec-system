@@ -15,7 +15,7 @@ router.get('/clients', async (req, res) => {
   const { rows } = await query(
     `SELECT c.account_no, c.name, c.contact_no, c.email, c.address, c.status,
             p.plan_id, p.plan_name, p.monthly_rate, c.due_day,
-            TO_CHAR(COALESCE(c.registered_date, c.created_at::date), 'YYYY-MM-DD') AS registered_date
+            TO_CHAR(c.created_at, 'YYYY-MM-DD') AS registered_date
        FROM clients c JOIN plans p USING (plan_id)
       WHERE c.branch_code=$1 AND (c.name ILIKE $2 OR c.account_no LIKE $2 OR c.email ILIKE $2)
       ORDER BY c.client_seq`,
@@ -83,26 +83,54 @@ router.post('/clients', async (req, res) => {
         [accountNo, hash]
       );
 
-      await c.query(
-        `INSERT INTO clients (account_no, user_id, branch_code, client_seq, plan_id, name, contact_no, email, address,
-                              facebook, router_location, registered_date, due_day, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$12::timestamptz)`,
-        [
-          accountNo,
-          u.rows[0].user_id,
-          req.user.branchCode,
-          seq,
-          planId,
-          name,
-          contactNo,
-          email,
-          address,
-          b.facebook || null,
-          b.routerLocation || b.router_location || null,
-          registeredDate,
-          reg.getDate()
-        ]
+      const colCheck = await c.query(
+        `SELECT column_name FROM information_schema.columns
+          WHERE table_name='clients' AND column_name='registered_date'`
       );
+
+      if (colCheck.rows.length) {
+        await c.query(
+          `INSERT INTO clients (account_no, user_id, branch_code, client_seq, plan_id, name, contact_no, email, address,
+                                facebook, router_location, registered_date, due_day, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$12::timestamptz)`,
+          [
+            accountNo,
+            u.rows[0].user_id,
+            req.user.branchCode,
+            seq,
+            planId,
+            name,
+            contactNo,
+            email,
+            address,
+            b.facebook || null,
+            b.routerLocation || b.router_location || null,
+            registeredDate,
+            reg.getDate()
+          ]
+        );
+      } else {
+        await c.query(
+          `INSERT INTO clients (account_no, user_id, branch_code, client_seq, plan_id, name, contact_no, email, address,
+                                facebook, router_location, due_day, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::timestamptz)`,
+          [
+            accountNo,
+            u.rows[0].user_id,
+            req.user.branchCode,
+            seq,
+            planId,
+            name,
+            contactNo,
+            email,
+            address,
+            b.facebook || null,
+            b.routerLocation || b.router_location || null,
+            reg.getDate(),
+            registeredDate
+          ]
+        );
+      }
 
       await addNotice(c, {
         accountNo,
