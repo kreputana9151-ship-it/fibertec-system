@@ -692,7 +692,7 @@ function renderAnalytics() {
     var bc = liveClients(bn);
     var regInMonth = bc.filter(function (c) { return c.created_month === m; }).length;
     var termInMonth = bc.filter(function (c) {
-      return c.status === "Terminated" && (!c.terminated_month || c.terminated_month === m);
+      return c.status === "Terminated" && c.terminated_month === m;
     }).length;
     reg.push(regInMonth);
     churn.push(pct(termInMonth, bc.length));
