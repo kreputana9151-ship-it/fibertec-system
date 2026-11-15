@@ -114,12 +114,23 @@ router.post('/clients', async (req, res) => {
         ]
       );
 
+      const welcomeMsg = `Welcome to FiberTec IT Solutions, ${name}! Your Account No. is ${accountNo}. Use your registered email (${email}) or Account No. (${accountNo}) and your assigned password to sign in to the FiberTec Client Portal.`;
+
       await addNotice(c, {
         accountNo,
         type: 'System Notice',
         channel: 'Portal Notification',
         status: 'Sent',
-        message: `Welcome to FiberTec! Your Account No. is ${accountNo}. Use your registered email (${email}) or Account No. to sign in.`
+        message: welcomeMsg
+      });
+
+      await addNotice(c, {
+        accountNo,
+        type: 'System Notice',
+        channel: 'Email',
+        recipient: email,
+        status: 'Pending',
+        message: welcomeMsg
       });
 
       await logActivity(c, req.user.userId, req.user.branchCode, `Registered client ${accountNo} (${name}) with portal credentials`);
@@ -132,6 +143,8 @@ router.post('/clients', async (req, res) => {
       email: out.email,
       message: `Client ${out.name} (${out.accountNo}) registered successfully. Portal login is now active.`
     });
+
+    deliverPendingEmails().catch(e => console.error('Welcome email delivery error:', e));
   } catch (e) {
     console.error('POST /api/staff/clients error:', e);
     res.status(400).json({ error: e.message });
