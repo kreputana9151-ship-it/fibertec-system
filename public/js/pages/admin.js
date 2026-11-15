@@ -388,7 +388,6 @@ function renderPayments() {
 /* ---------- Statistical Helpers: One-Way ANOVA & Markov Chain ---------- */
 function fDistPValue(F, df1, df2) {
   if (!isFinite(F) || F <= 0 || df1 <= 0 || df2 <= 0) return 1;
-  // Normal approximation to F-distribution (Wilson-Hilferty / Abramowitz & Stegun)
   var a = 2 / (9 * df1);
   var b = 2 / (9 * df2);
   var num = Math.pow(F, 1 / 3) * (1 - b) - (1 - a);
@@ -401,29 +400,8 @@ function fDistPValue(F, df1, df2) {
   return z > 0 ? Math.max(0.0001, Math.min(1, p)) : Math.max(0.0001, Math.min(1, 1 - p));
 }
 
-function getAnalyticsCardBody(titleNeedle, fallbackId) {
-  var direct = $(fallbackId);
-  if (direct) return direct;
-  var root = $("a-analytics") || document;
-  var cards = root.querySelectorAll(".dcard");
-  for (var i = 0; i < cards.length; i++) {
-    var txt = (cards[i].textContent || "").toLowerCase();
-    if (txt.indexOf(titleNeedle.toLowerCase()) >= 0) {
-      var body = cards[i].querySelector(".anova-body, .markov-body, .card-body, .dcard-body");
-      if (!body) {
-        body = document.createElement("div");
-        body.className = "stat-card-body";
-        body.style.marginTop = "12px";
-        cards[i].appendChild(body);
-      }
-      return body;
-    }
-  }
-  return null;
-}
-
 function renderAnovaCard(m, branchFilter) {
-  var host = getAnalyticsCardBody("anova", "anova-body");
+  var host = $("anova");
   if (!host) return;
 
   var allNames = branchScope("");
@@ -485,7 +463,7 @@ function renderAnovaCard(m, branchFilter) {
   }).join("");
 
   host.innerHTML =
-    "<div style='display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px'>" +
+    "<div style='display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 12px'>" +
       "<div style='flex:1;min-width:110px;background:#f4f8fc;border-left:4px solid #00417c;padding:8px 10px;border-radius:6px'>" +
         "<div style='font-size:11px;color:#5a6b82;text-transform:uppercase'>F-Statistic</div>" +
         "<div style='font-size:18px;font-weight:700;color:#002f6e'>" + fStat.toFixed(3) + "</div>" +
@@ -524,17 +502,15 @@ function renderAnovaCard(m, branchFilter) {
 }
 
 function renderMarkovCard(branchFilter) {
-  var host = getAnalyticsCardBody("markov", "markov-body");
+  var host = $("markov");
   if (!host) return;
 
   var cl = liveClients(branchFilter);
   var cnt = liveStatusCounts(cl);
   var total = Math.max(1, cl.length);
 
-  // Calibrate transition probabilities using observed state distribution & delinquency ratios
   var graceShare = cnt["Grace Period"] / total;
   var reviewShare = cnt["Under Review"] / total;
-  var termShare = cnt.Terminated / total;
 
   var pAG = Math.min(0.22, Math.max(0.06, Math.round((graceShare * 0.85 + 0.04) * 1000) / 1000));
   var pAR = Math.min(0.08, Math.max(0.01, Math.round((reviewShare * 0.35 + 0.01) * 1000) / 1000));
@@ -551,7 +527,6 @@ function renderMarkovCard(branchFilter) {
   var pRR = 0.32;
   var pRT = 0.28;
 
-  // Absorbing state: Terminated -> Terminated = 1.00
   var states = ["Active", "Grace Period", "Under Review", "Terminated"];
   var matrix = [
     [pAA, pAG, pAR, pAT],
@@ -560,7 +535,6 @@ function renderMarkovCard(branchFilter) {
     [0.00, 0.00, 0.00, 1.00]
   ];
 
-  // 1-step next-month forecast: v_next = v_curr * P
   var curr = [cnt.Active, cnt["Grace Period"], cnt["Under Review"], cnt.Terminated];
   var next = [0, 0, 0, 0];
   for (var i = 0; i < 4; i++) {
@@ -587,7 +561,7 @@ function renderMarkovCard(branchFilter) {
   }).join("");
 
   host.innerHTML =
-    "<div style='display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px'>" +
+    "<div style='display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 12px'>" +
       "<div style='flex:1;min-width:120px;background:#f4f8fc;border-left:4px solid #4cb153;padding:8px 10px;border-radius:6px'>" +
         "<div style='font-size:11px;color:#5a6b82;text-transform:uppercase'>Active Retention</div>" +
         "<div style='font-size:18px;font-weight:700;color:#002f6e'>" + (pAA * 100).toFixed(1) + "%</div>" +
