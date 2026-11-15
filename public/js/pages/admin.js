@@ -95,6 +95,8 @@ async function syncAdminData() {
       plan: c.plan_name,
       status: c.status,
       due_day: c.due_day,
+      created_month: String(c.created_at || c.installed_date || "").slice(0, 7),
+      terminated_month: c.status === "Terminated" ? String(c.updated_at || "").slice(0, 7) : "",
       email: c.email || "",
       address: c.address || c.branch + " Service Area",
       short: c.plan_name,
@@ -113,6 +115,8 @@ async function syncAdminData() {
       branch_code: s.branch_code,
       plan: "Fiber Plan",
       status: "Active",
+      created_month: "",
+      terminated_month: "",
       email: "",
       address: ""
     };
@@ -385,19 +389,60 @@ function renderPayments() {
   $("pay-foot").innerHTML = footHTML("pay", info, renderPayments);
 }
 
-/* ---------- Statistical Helpers: One-Way ANOVA & Markov Chain ---------- */
+/* ---------- Exact F-Distribution & Statistical Helpers ---------- */
+function logGamma(z) {
+  var c = [
+    76.18009172947146, -86.50532032941677, 24.01409824083091,
+    -1.231739572450155, 0.001208650973866179, -0.000005395239384953
+  ];
+  var x = z, y = z, tmp = x + 5.5;
+  tmp -= (x + 0.5) * Math.log(tmp);
+  var ser = 1.000000000190015;
+  for (var j = 0; j < 6; j++) ser += c[j] / ++y;
+  return -tmp + Math.log(2.5066282746310005 * ser / x);
+}
+
+function betaCf(a, b, x) {
+  var MAXIT = 100, EPS = 3e-7, FPMIN = 1e-30;
+  var qab = a + b, qap = a + 1, qam = a - 1;
+  var c = 1, d = 1 - qab * x / qap;
+  if (Math.abs(d) < FPMIN) d = FPMIN;
+  d = 1 / d;
+  var h = d;
+  for (var m = 1; m <= MAXIT; m++) {
+    var m2 = 2 * m;
+    var aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+    d = 1 + aa * d;
+    if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c;
+    if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    h *= d * c;
+    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+    d = 1 + aa * d;
+    if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c;
+    if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    var del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < EPS) break;
+  }
+  return h;
+}
+
+function regIncompleteBeta(a, b, x) {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  var bt = Math.exp(logGamma(a + b) - logGamma(a) - logGamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+  if (x < (a + 1) / (a + b + 2)) return bt * betaCf(a, b, x) / a;
+  return 1 - bt * betaCf(b, a, 1 - x) / b;
+}
+
 function fDistPValue(F, df1, df2) {
   if (!isFinite(F) || F <= 0 || df1 <= 0 || df2 <= 0) return 1;
-  var a = 2 / (9 * df1);
-  var b = 2 / (9 * df2);
-  var num = Math.pow(F, 1 / 3) * (1 - b) - (1 - a);
-  var den = Math.sqrt(a + b * Math.pow(F, 2 / 3));
-  if (!den) return 1;
-  var z = num / den;
-  var t = 1 / (1 + 0.2316419 * Math.abs(z));
-  var d = 0.3989422804014327 * Math.exp(-0.5 * z * z);
-  var p = d * t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
-  return z > 0 ? Math.max(0.0001, Math.min(1, p)) : Math.max(0.0001, Math.min(1, 1 - p));
+  var x = df2 / (df2 + df1 * F);
+  return Math.max(0.0001, Math.min(1, regIncompleteBeta(df2 / 2, df1 / 2, x)));
 }
 
 function renderAnovaCard(m, branchFilter) {
@@ -427,8 +472,7 @@ function renderAnovaCard(m, branchFilter) {
       mean: mean,
       variance: variance,
       sd: Math.sqrt(variance),
-      ssWithin: ssWithin,
-      values: values
+      ssWithin: ssWithin
     };
   }).filter(function (g) { return g.n > 0; });
 
@@ -480,10 +524,10 @@ function renderAnovaCard(m, branchFilter) {
       "</div>" +
     "</div>" +
     "<p style='font-size:12px;color:#4a5a70;margin:0 0 10px;line-height:1.45'>" +
-      "One-Way ANOVA comparing mean collected revenue per subscriber across <b>" + k + " branches</b> (N = " + totalN + ", Grand Mean = <b>" + peso(grandMean) + "</b>). " +
+      "One-Way ANOVA on verified collections per subscriber in <b>" + monthLabel(m) + "</b> across <b>" + k + " branches</b> (N = " + totalN + ", Grand Mean = <b>" + peso(grandMean) + "</b>). " +
       (sig
-        ? "Because <i>p</i> &lt; 0.05, average collection per client differs significantly across branches."
-        : "Because <i>p</i> &ge; 0.05, average revenue per client is statistically consistent across branches.") +
+        ? "Since <i>p</i> &lt; 0.05, mean verified revenue per client differs significantly across branches."
+        : "Since <i>p</i> &ge; 0.05, mean verified revenue per client is statistically consistent across branches.") +
     "</p>" +
     "<div style='overflow-x:auto'>" +
       "<table class='bp' style='width:100%;font-size:12px;margin-bottom:10px'>" +
@@ -501,31 +545,38 @@ function renderAnovaCard(m, branchFilter) {
     "</div>";
 }
 
-function renderMarkovCard(branchFilter) {
+function renderMarkovCard(m, branchFilter) {
   var host = $("markov");
   if (!host) return;
 
   var cl = liveClients(branchFilter);
   var cnt = liveStatusCounts(cl);
+  var stm = liveStatements(m, branchFilter);
   var total = Math.max(1, cl.length);
 
+  var paidCount = 0;
+  stm.forEach(function (s) {
+    if (s.pay === "Paid") paidCount++;
+  });
+  var stmTotal = Math.max(1, stm.length);
+  var collectionRatio = paidCount / stmTotal;
   var graceShare = cnt["Grace Period"] / total;
   var reviewShare = cnt["Under Review"] / total;
 
-  var pAG = Math.min(0.22, Math.max(0.06, Math.round((graceShare * 0.85 + 0.04) * 1000) / 1000));
-  var pAR = Math.min(0.08, Math.max(0.01, Math.round((reviewShare * 0.35 + 0.01) * 1000) / 1000));
+  var pAG = Math.min(0.25, Math.max(0.05, Math.round((graceShare * 0.8 + (1 - collectionRatio) * 0.06) * 1000) / 1000));
+  var pAR = Math.min(0.10, Math.max(0.01, Math.round((reviewShare * 0.4 + 0.01) * 1000) / 1000));
   var pAT = 0.005;
   var pAA = Math.max(0.5, Math.round((1 - pAG - pAR - pAT) * 1000) / 1000);
 
-  var pGA = 0.54;
-  var pGG = 0.24;
-  var pGR = 0.16;
-  var pGT = 0.06;
+  var pGA = Math.min(0.75, Math.max(0.35, Math.round((0.40 + collectionRatio * 0.35) * 1000) / 1000));
+  var pGG = Math.round((0.65 - pGA * 0.5) * 1000) / 1000;
+  var pGT = 0.05;
+  var pGR = Math.max(0.05, Math.round((1 - pGA - pGG - pGT) * 1000) / 1000);
 
-  var pRA = 0.28;
+  var pRA = Math.min(0.45, Math.max(0.15, Math.round((0.20 + collectionRatio * 0.25) * 1000) / 1000));
   var pRG = 0.12;
-  var pRR = 0.32;
-  var pRT = 0.28;
+  var pRT = Math.min(0.40, Math.max(0.15, Math.round((0.35 - collectionRatio * 0.15) * 1000) / 1000));
+  var pRR = Math.max(0.10, Math.round((1 - pRA - pRG - pRT) * 1000) / 1000);
 
   var states = ["Active", "Grace Period", "Under Review", "Terminated"];
   var matrix = [
@@ -544,7 +595,8 @@ function renderMarkovCard(branchFilter) {
   }
   var nextRounded = next.map(function (v) { return Math.round(v); });
   var expectedNewChurn = Math.max(0, nextRounded[3] - curr[3]);
-  var monthlyChurnRisk = pct(curr[0] * pAT + curr[1] * pGT + curr[2] * pRT, Math.max(1, curr[0] + curr[1] + curr[2]));
+  var atRiskBase = Math.max(1, curr[0] + curr[1] + curr[2]);
+  var monthlyChurnRisk = pct(curr[0] * pAT + curr[1] * pGT + curr[2] * pRT, atRiskBase);
 
   var mRows = states.map(function (st, rIdx) {
     var cells = matrix[rIdx].map(function (prob, cIdx) {
@@ -576,7 +628,7 @@ function renderMarkovCard(branchFilter) {
       "</div>" +
     "</div>" +
     "<p style='font-size:12px;color:#4a5a70;margin:0 0 10px;line-height:1.45'>" +
-      "4-state absorbing Markov Chain modeling monthly transitions from <b>Active</b> &rarr; <b>Grace Period</b> &rarr; <b>Under Review</b> &rarr; <b>Terminated</b> (absorbing state, <i>P</i><sub>TT</sub> = 100%)." +
+      "4-state absorbing Markov Chain calibrated from <b>" + (branchFilter || "All Branches") + "</b> (" + monthLabel(m) + " paid rate: <b>" + pct(paidCount, stmTotal) + "%</b>; <i>P</i><sub>TT</sub> = 100%)." +
     "</p>" +
     "<div style='overflow-x:auto'>" +
       "<table class='bp' style='width:100%;font-size:12px;margin-bottom:10px'>" +
@@ -624,7 +676,7 @@ function renderAnalytics() {
 
   var planNames = [];
   cl.forEach(function (c) { if (c.plan && planNames.indexOf(c.plan) < 0) planNames.push(c.plan); });
-  if (!planNames.length) planNames = ["Fiber 100 Mbps", "Fiber 200 Mbps", "Fiber 300 Mbps", "Fiber 500 Mbps"];
+  if (!planNames.length) planNames = ["LiteSpeed 50Mbps", "Turbo 110 Mbps", "Elite 150 Mbps", "Premium 220 Mbps"];
   var cols = ["#1b7a8a", "#0d4f7a", "#f5a623", "#8fb8d0"];
   var pv = planNames.map(function (pn) { return cl.filter(function (c) { return c.plan === pn; }).length; });
   var lg = "";
@@ -638,14 +690,32 @@ function renderAnalytics() {
   var reg = [], churn = [];
   names.forEach(function (bn) {
     var bc = liveClients(bn);
-    reg.push(bc.filter(function (c) { return c.status === "Active"; }).length);
-    churn.push(pct(bc.filter(function (c) { return c.status === "Terminated"; }).length, bc.length));
+    var regInMonth = bc.filter(function (c) { return c.created_month === m; }).length;
+    var termInMonth = bc.filter(function (c) {
+      return c.status === "Terminated" && (!c.terminated_month || c.terminated_month === m);
+    }).length;
+    reg.push(regInMonth);
+    churn.push(pct(termInMonth, bc.length));
   });
-  barChart({ id: "reg-chart", labels: names, h: 160, fmt: function (v) { return Math.round(v); }, sub: "Active subscribers by branch", series: [{ name: "Active clients", color: C_BILLED, vals: reg }] });
-  barChart({ id: "churn-chart", labels: names, h: 160, fmt: function (v) { return Math.round(v * 10) / 10 + "%"; }, sub: "Terminated accounts / all clients", series: [{ name: "Cancellation rate", color: "#d74548", vals: churn, exact: function (v) { return v + "%"; } }] });
+  barChart({
+    id: "reg-chart",
+    labels: names,
+    h: 160,
+    fmt: function (v) { return Math.round(v); },
+    sub: "New sign-ups in " + monthLabel(m),
+    series: [{ name: "New registrations", color: C_BILLED, vals: reg }]
+  });
+  barChart({
+    id: "churn-chart",
+    labels: names,
+    h: 160,
+    fmt: function (v) { return Math.round(v * 10) / 10 + "%"; },
+    sub: "Cancellations in " + monthLabel(m) + " / branch clients",
+    series: [{ name: "Monthly cancellation rate", color: "#d74548", vals: churn, exact: function (v) { return v + "%"; } }]
+  });
 
   renderAnovaCard(m, b);
-  renderMarkovCard(b);
+  renderMarkovCard(m, b);
 }
 
 /* ---------- Email & portal notifications ---------- */
