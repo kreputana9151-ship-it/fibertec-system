@@ -22,8 +22,8 @@ router.get('/clients', async (req, res) => {
             c.status,
             c.due_day,
             c.email,
-            TO_CHAR(c.created_at, 'YYYY-MM-DD') AS created_at,
-            TO_CHAR(COALESCE(c.term_date::timestamptz, c.updated_at), 'YYYY-MM-DD') AS updated_at
+            TO_CHAR(COALESCE(c.registered_date, c.created_at::date), 'YYYY-MM-DD') AS created_at,
+            TO_CHAR(c.term_date, 'YYYY-MM-DD') AS updated_at
        FROM clients c
        JOIN branches b USING (branch_code)
        JOIN plans p USING (plan_id)
