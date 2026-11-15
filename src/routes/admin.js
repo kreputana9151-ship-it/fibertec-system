@@ -1,165 +1,269 @@
-const router = require('express').Router();
-const { requireAuth, requireRole } = require('../middleware/auth');
-const { query, tx } = require('../db');
-const { sendStatement, generateStatementsForToday, runStatusEngine } = require('../services/billing');
-const { changeStatus, logActivity } = require('../services/audit');
-const { sendEmail } = require('../services/mailer');
+const express = require("express");
+const { query, pool } = require("../db");
+const { requireAuth, requireRole } = require("../middleware/auth");
+const { sendBillingNotice } = require("../services/mailer");
 
-router.use(requireAuth, requireRole('admin'));
-// admin sees ALL branches. History shown to admin = last 6 months (purge job deletes older rows)
+const router = express.Router();
 
-const SIX = "date_trunc('month', current_date) - interval '6 months'";
+router.use(requireAuth, requireRole("admin"));
 
-// GET /api/admin/clients?branch=04&status=Active
-router.get('/clients', async (req, res) => {
-  const { rows } = await query(
-    `SELECT c.account_no, c.name, c.address, b.name AS branch, p.plan_name, p.monthly_rate, c.status, c.due_day, c.email
-       FROM clients c JOIN branches b USING (branch_code) JOIN plans p USING (plan_id)
-      WHERE ($1::text IS NULL OR c.branch_code=$1) AND ($2::text IS NULL OR c.status=$2)
-      ORDER BY c.branch_code, c.client_seq`, [req.query.branch || null, req.query.status || null]);
-  res.json(rows);
-});
-
-// GET /api/admin/statements?month=2026-10-01&branch=04
-router.get('/statements', async (req, res) => {
-  const { rows } = await query(
-    `SELECT s.*, c.name, c.branch_code FROM statements s JOIN clients c USING (account_no)
-      WHERE s.billing_month >= (${SIX})
-        AND ($1::date IS NULL OR s.billing_month=$1) AND ($2::text IS NULL OR c.branch_code=$2)
-      ORDER BY s.billing_month DESC, s.account_no`, [req.query.month || null, req.query.branch || null]);
-  res.json(rows);
-});
-
-// GET /api/admin/payments?month=2026-11&branch=04&status=Verified
-router.get('/payments', async (req, res) => {
-  const { rows } = await query(
-    `SELECT p.*, c.name, c.branch_code, b.name AS branch
-       FROM payments p
-       JOIN clients c USING (account_no)
-       JOIN branches b ON b.branch_code = c.branch_code
-      WHERE p.created_at >= (${SIX})
-        AND ($1::text IS NULL OR to_char(COALESCE(p.payment_date, p.created_at::date), 'YYYY-MM') = $1)
-        AND ($2::text IS NULL OR c.branch_code = $2)
-        AND ($3::text IS NULL OR p.status = $3)
-      ORDER BY COALESCE(p.payment_date, p.created_at::date) DESC, p.payment_id DESC`,
-    [req.query.month || null, req.query.branch || null, req.query.status || null]
-  );
-  res.json(rows);
-});
-
-// POST /api/admin/statements/generate  -> run generation now (for demo / testing)
-router.post('/statements/generate', async (req, res) => {
-  const created = await generateStatementsForToday();
-  res.json({ created });
-});
-
-// POST /api/admin/statements/:id/send   (send or re-send one statement)
-router.post('/statements/:id/send', async (req, res) => {
+// GET /api/admin/clients
+router.get("/clients", async (req, res) => {
   try {
-    const ok = await sendStatement(req.params.id, req.user.userId);
-    await tx(c => logActivity(c, req.user.userId, null, `Sent statement #${req.params.id} (${ok ? 'Delivered' : 'Failed'})`));
-    res.json({ delivered: ok });
-  } catch (e) { res.status(404).json({ error: e.message }); }
+    const { rows } = await query(`
+      SELECT c.account_no,
+             c.name,
+             c.email,
+             c.address,
+             c.due_day,
+             c.status,
+             TO_CHAR(c.created_at, 'YYYY-MM-DD') AS created_at,
+             TO_CHAR(c.updated_at, 'YYYY-MM-DD') AS updated_at,
+             b.branch_code,
+             b.name AS branch,
+             p.plan_id,
+             p.name AS plan_name,
+             p.monthly_rate
+      FROM clients c
+      LEFT JOIN branches b ON b.branch_code = c.branch_code
+      LEFT JOIN plans p ON p.plan_id = c.plan_id
+      ORDER BY c.account_no ASC
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error("GET /api/admin/clients error:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// GET /api/admin/notices?status=Failed
-router.get('/notices', async (req, res) => {
-  const { rows } = await query(
-    `SELECT n.*, c.name FROM notices n JOIN clients c USING (account_no)
-      WHERE n.notice_date >= (${SIX}) AND ($1::text IS NULL OR n.delivery_status=$1)
-      ORDER BY n.created_at DESC LIMIT 500`, [req.query.status || null]);
-  res.json(rows);
+// POST /api/admin/clients
+router.post("/clients", async (req, res) => {
+  const { account_no, name, email, address, branch_code, plan_id, due_day, status } = req.body || {};
+  if (!account_no || !name || !branch_code || !plan_id) {
+    return res.status(400).json({ error: "account_no, name, branch_code, and plan_id are required." });
+  }
+
+  try {
+    const { rows } = await query(
+      `INSERT INTO clients (account_no, name, email, address, branch_code, plan_id, due_day, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+       RETURNING *`,
+      [
+        account_no,
+        name,
+        email || null,
+        address || null,
+        branch_code,
+        plan_id,
+        due_day || 15,
+        status || "Active"
+      ]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error("POST /api/admin/clients error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/admin/clients/:accountNo
+router.patch("/clients/:accountNo", async (req, res) => {
+  const { accountNo } = req.params;
+  const { name, email, address, branch_code, plan_id, due_day, status } = req.body || {};
+
+  try {
+    const { rows } = await query(
+      `UPDATE clients
+       SET name = COALESCE($1, name),
+           email = COALESCE($2, email),
+           address = COALESCE($3, address),
+           branch_code = COALESCE($4, branch_code),
+           plan_id = COALESCE($5, plan_id),
+           due_day = COALESCE($6, due_day),
+           status = COALESCE($7, status),
+           updated_at = NOW()
+       WHERE account_no = $8
+       RETURNING *`,
+      [name, email, address, branch_code, plan_id, due_day, status, accountNo]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Client not found." });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("PATCH /api/admin/clients/:accountNo error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/statements
+router.get("/statements", async (req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT s.statement_id,
+             s.invoice_no,
+             s.account_no,
+             s.billing_month,
+             s.bill_date,
+             s.due_date,
+             s.amount,
+             s.amount_paid,
+             s.balance,
+             s.payment_status,
+             s.send_status,
+             c.name,
+             c.branch_code,
+             b.name AS branch
+      FROM statements s
+      LEFT JOIN clients c ON c.account_no = s.account_no
+      LEFT JOIN branches b ON b.branch_code = c.branch_code
+      ORDER BY s.billing_month DESC, s.statement_id DESC
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error("GET /api/admin/statements error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/statements/:id/send
+router.post("/statements/:id/send", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { rows } = await query(
+      `SELECT s.*, c.name, c.email, c.address, b.name AS branch, p.name AS plan_name
+       FROM statements s
+       JOIN clients c ON c.account_no = s.account_no
+       LEFT JOIN branches b ON b.branch_code = c.branch_code
+       LEFT JOIN plans p ON p.plan_id = c.plan_id
+       WHERE s.statement_id = $1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Statement not found." });
+
+    const stmt = rows[0];
+    let delivered = false;
+    if (stmt.email && typeof sendBillingNotice === "function") {
+      try {
+        await sendBillingNotice(stmt);
+        delivered = true;
+      } catch (mailErr) {
+        console.error("Brevo send error:", mailErr);
+      }
+    }
+
+    const newSendStatus = delivered ? "Delivered" : "Failed";
+    await query(
+      `UPDATE statements SET send_status = $1 WHERE statement_id = $2`,
+      [newSendStatus, id]
+    );
+
+    await query(
+      `INSERT INTO notices (account_no, notice_date, channel, recipient, notice_type, delivery_status)
+       VALUES ($1, CURRENT_DATE, 'Email', $2, '7-Day Billing Notice', $3)`,
+      [stmt.account_no, stmt.email || "No email on file", delivered ? "Sent" : "Failed"]
+    );
+
+    res.json({ delivered, send_status: newSendStatus });
+  } catch (err) {
+    console.error("POST /api/admin/statements/:id/send error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/payments
+router.get("/payments", async (req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT p.payment_id,
+             p.statement_id,
+             p.account_no,
+             p.payment_date,
+             p.amount,
+             p.payment_method,
+             p.reference_no,
+             p.or_no,
+             p.status,
+             p.created_at,
+             c.name,
+             c.branch_code,
+             b.name AS branch
+      FROM payments p
+      LEFT JOIN clients c ON c.account_no = p.account_no
+      LEFT JOIN branches b ON b.branch_code = c.branch_code
+      ORDER BY p.payment_date DESC, p.payment_id DESC
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error("GET /api/admin/payments error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/notices
+router.get("/notices", async (req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT n.notice_id,
+             n.account_no,
+             n.notice_date,
+             n.channel,
+             n.recipient,
+             n.notice_type,
+             n.delivery_status,
+             n.created_at,
+             c.name
+      FROM notices n
+      LEFT JOIN clients c ON c.account_no = n.account_no
+      ORDER BY n.notice_date DESC, n.notice_id DESC
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error("GET /api/admin/notices error:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/admin/notices/:id/resend
-router.post('/notices/:id/resend', async (req, res) => {
-  const n = (await query('SELECT * FROM notices WHERE notice_id=$1', [req.params.id])).rows[0];
-  if (!n) return res.status(404).json({ error: 'Notice not found' });
-  const ok = n.channel === 'Email' ? await sendEmail(n.recipient, n.notice_type, n.message || 'Resent notice') : true;
-  await tx(async c => {
-    await c.query('UPDATE notices SET delivery_status=$2, resent_by_admin=$3 WHERE notice_id=$1',
-      [n.notice_id, ok ? 'Sent' : 'Failed', req.user.userId]);
-    await logActivity(c, req.user.userId, null, `Resent notice #${n.notice_id}`);
-  });
-  res.json({ delivered: ok });
-});
-
-// PATCH /api/admin/clients/:accountNo/status  { status: 'Active'|'Terminated', reason }
-router.patch('/clients/:accountNo/status', async (req, res) => {
-  const { status, reason } = req.body || {};
-  if (!['Active', 'Terminated'].includes(status)) return res.status(400).json({ error: 'Use Active or Terminated' });
+router.post("/notices/:id/resend", async (req, res) => {
+  const { id } = req.params;
   try {
-    await tx(async c => {
-      const extra = status === 'Terminated'
-        ? { termDate: new Date().toISOString().slice(0, 10), termReason: reason || 'Admin decision' } : {};
-      await changeStatus(c, req.params.accountNo, status, reason || (status === 'Active' ? 'Reinstated by admin' : 'Terminated by admin'), req.user.userId, extra);
-      await logActivity(c, req.user.userId, null, `Set ${req.params.accountNo} to ${status}`);
-    });
-    res.json({ ok: true });
-  } catch (e) { res.status(400).json({ error: e.message }); }
-});
+    const { rows } = await query(
+      `SELECT n.*, c.name, c.email
+       FROM notices n
+       LEFT JOIN clients c ON c.account_no = n.account_no
+       WHERE n.notice_id = $1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Notice not found." });
 
-// GET /api/admin/clients/:accountNo/status-log
-router.get('/clients/:accountNo/status-log', async (req, res) => {
-  const { rows } = await query('SELECT * FROM account_status_log WHERE account_no=$1 ORDER BY changed_at DESC', [req.params.accountNo]);
-  res.json(rows);
-});
+    const notice = rows[0];
+    let delivered = false;
+    if (notice.channel === "Email" && (notice.recipient || notice.email) && typeof sendBillingNotice === "function") {
+      try {
+        await sendBillingNotice({
+          email: notice.recipient || notice.email,
+          name: notice.name,
+          account_no: notice.account_no,
+          notice_type: notice.notice_type
+        });
+        delivered = true;
+      } catch (mailErr) {
+        console.error("Resend email error:", mailErr);
+      }
+    } else if (notice.channel === "Portal Notification") {
+      delivered = true;
+    }
 
-// GET /api/admin/analytics?month=2026-10-01  -> Billed vs Collected + Collection Efficiency per branch
-router.get('/analytics', async (req, res) => {
-  const { rows } = await query(
-    `SELECT b.branch_code, b.name AS branch,
-            COALESCE(SUM(s.amount),0)      AS billed,
-            COALESCE(SUM(s.amount_paid),0) AS collected,
-            CASE WHEN COALESCE(SUM(s.amount),0)=0 THEN 0
-                 ELSE ROUND(SUM(s.amount_paid)/SUM(s.amount)*100,1) END AS collection_efficiency
-       FROM branches b
-       LEFT JOIN clients c ON c.branch_code=b.branch_code
-       LEFT JOIN statements s ON s.account_no=c.account_no AND s.billing_month=$1::date
-      GROUP BY b.branch_code, b.name ORDER BY b.branch_code`,
-    [req.query.month || new Date().toISOString().slice(0, 8) + '01']);
-  res.json(rows);
-});
+    const newStatus = delivered ? "Sent" : "Failed";
+    await query(
+      `UPDATE notices SET delivery_status = $1, notice_date = CURRENT_DATE WHERE notice_id = $2`,
+      [newStatus, id]
+    );
 
-// GET /api/admin/activity?branch=04  (6 months)
-router.get('/activity', async (req, res) => {
-  const { rows } = await query(
-    `SELECT a.*, u.login_id FROM activity_log a JOIN users u USING (user_id)
-      WHERE a.logged_at >= (${SIX}) AND ($1::text IS NULL OR a.branch_code=$1)
-      ORDER BY a.logged_at DESC LIMIT 500`, [req.query.branch || null]);
-  res.json(rows);
-});
-
-// POST /api/admin/run-daily  -> trigger the daily job by hand (for the defense demo)
-router.post('/run-daily', async (req, res) => {
-  const created = await generateStatementsForToday();
-  const status = await runStatusEngine();
-  res.json({ statementsCreated: created, status });
-});
-
-// GET /api/admin/users?q=bagong  -> find any client / staff / admin account (no passwords are ever returned)
-router.get('/users', async (req, res) => {
-  const { rows } = await query(
-    `SELECT u.user_id, u.login_id, u.role, u.is_active, c.email, COALESCE(a.full_name, s.full_name, c.name) AS name
-       FROM users u LEFT JOIN admins a ON a.user_id=u.user_id LEFT JOIN staff s ON s.user_id=u.user_id LEFT JOIN clients c ON c.user_id=u.user_id
-      WHERE $1::text IS NULL OR u.login_id ILIKE '%'||$1||'%' OR c.name ILIKE '%'||$1||'%' OR c.email ILIKE '%'||$1||'%'
-      ORDER BY u.role, u.login_id LIMIT 100`, [req.query.q || null]);
-  res.json(rows);
-});
-
-// POST /api/admin/users/:userId/reset-password  { newPassword }
-router.post('/users/:userId/reset-password', async (req, res) => {
-  const pw = (req.body || {}).newPassword;
-  if (typeof pw !== 'string' || pw.length < 8 || pw.length > 72) return res.status(400).json({ error: 'Password must be 8 to 72 characters.' });
-  const target = (await query('SELECT login_id FROM users WHERE user_id=$1', [req.params.userId])).rows[0];
-  if (!target) return res.status(404).json({ error: 'Account not found' });
-  const own = Number(req.params.userId) === req.user.userId;
-  await tx(async c => {
-    await c.query('UPDATE users SET password_hash=$2, must_change_password=$3 WHERE user_id=$1',
-      [req.params.userId, await require('bcrypt').hash(pw, 10), !own]);
-    await logActivity(c, req.user.userId, null, `Reset password of ${target.login_id}`);
-  });
-  res.json({ ok: true });
+    res.json({ delivered, delivery_status: newStatus });
+  } catch (err) {
+    console.error("POST /api/admin/notices/:id/resend error:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
