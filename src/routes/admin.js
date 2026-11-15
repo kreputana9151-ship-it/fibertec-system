@@ -13,10 +13,24 @@ const SIX = "date_trunc('month', current_date) - interval '6 months'";
 // GET /api/admin/clients?branch=04&status=Active
 router.get('/clients', async (req, res) => {
   const { rows } = await query(
-    `SELECT c.account_no, c.name, c.address, b.name AS branch, p.plan_name, p.monthly_rate, c.status, c.due_day, c.email
-       FROM clients c JOIN branches b USING (branch_code) JOIN plans p USING (plan_id)
+    `SELECT c.account_no,
+            c.name,
+            c.address,
+            b.name AS branch,
+            p.plan_name,
+            p.monthly_rate,
+            c.status,
+            c.due_day,
+            c.email,
+            TO_CHAR(c.created_at, 'YYYY-MM-DD') AS created_at,
+            TO_CHAR(COALESCE(c.term_date::timestamptz, c.updated_at), 'YYYY-MM-DD') AS updated_at
+       FROM clients c
+       JOIN branches b USING (branch_code)
+       JOIN plans p USING (plan_id)
       WHERE ($1::text IS NULL OR c.branch_code=$1) AND ($2::text IS NULL OR c.status=$2)
-      ORDER BY c.branch_code, c.client_seq`, [req.query.branch || null, req.query.status || null]);
+      ORDER BY c.branch_code, c.client_seq`,
+    [req.query.branch || null, req.query.status || null]
+  );
   res.json(rows);
 });
 
