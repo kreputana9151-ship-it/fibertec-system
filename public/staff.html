@@ -68,7 +68,6 @@
       <div class="dcard fifo" style="margin-bottom:16px">
         <p class="st-title">Payments Verification Queue <span class="badge orange" style="min-width:0"><span id="pcount">0</span> pending</span>
           <span style="float:right;font-weight:400"><small id="q-updated" class="muted"></small> <button class="btn btn-light" style="height:28px;font-size:13px" onclick="refreshPayments()">&#8635; Refresh</button></span></p>
-        <p class="fifo-note">Single-server FIFO (M/M/1): payments are verified strictly in the order they were submitted. Only Queue #1 can be processed.</p>
         <div class="fifo-metrics" id="fifo-metrics"></div>
         <div id="queue"></div>
       </div>
