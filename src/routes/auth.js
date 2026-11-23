@@ -72,14 +72,20 @@ const SAME_ANSWER = { ok: true, message: 'If this account has an email on file, 
 router.post('/forgot-password', limit(5, 15 * 60 * 1000), wrap(async (req, res) => {
   const id = String((req.body || {}).loginId || '').trim();
   if (id) {
-    const rows = (await findUsers(id)).filter(r => r.role === 'client' && r.is_active && r.email);
-    if (rows.length === 1) {
+    const allMatched = await findUsers(id);
+    const rows = allMatched.filter(r => r.role === 'client' && r.is_active && r.email);
+    if (!rows.length) {
+      console.warn(`[FORGOT PASSWORD SKIPPED] loginId="${id}" matched=${allMatched.length} details=${JSON.stringify(allMatched.map(r => ({ user_id: r.user_id, role: r.role, is_active: r.is_active, hasEmail: !!r.email })))}`);
+    }
+    for (const u of rows) {
       const token = crypto.randomBytes(32).toString('hex');
-      await query('DELETE FROM password_resets WHERE user_id=$1 AND used_at IS NULL', [rows[0].user_id]);
+      await query('DELETE FROM password_resets WHERE user_id=$1 AND used_at IS NULL', [u.user_id]);
       await query(`INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES ($1,$2, now() + interval '30 minutes')`,
-        [rows[0].user_id, sha256(token)]);
-      const link = `${process.env.APP_URL || ''}/forgot-password.html?token=${token}`;
-      await sendEmail(rows[0].email, 'FiberTec password reset', `Open this link within 30 minutes to set a new password:\n${link}\n\nIf you did not ask for this, ignore this email.`);
+        [u.user_id, sha256(token)]);
+      const baseUrl = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+      const link = `${baseUrl}/forgot-password.html?token=${token}`;
+      console.log(`[FORGOT PASSWORD] Dispatching reset email to ${u.email} for account ${u.account_no}`);
+      await sendEmail(u.email, 'FiberTec password reset', `Open this link within 30 minutes to set a new password:\n${link}\n\nIf you did not ask for this, ignore this email.`);
     }
   }
   res.json(SAME_ANSWER);                                            // same answer whether or not the account exists
