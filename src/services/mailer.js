@@ -15,8 +15,15 @@ async function sendEmail(to, subject, text, opts = {}) {
   try {
     const r = await fetch('https://api.brevo.com/v3/smtp/email', { method: 'POST', signal: ctl.signal, body: JSON.stringify(body),
       headers: { 'api-key': key, 'content-type': 'application/json', accept: 'application/json' } });
-    if (!r.ok) { console.error('[EMAIL FAILED]', r.status, await r.text().catch(() => '')); return false; }
+    if (!r.ok) {
+      const responseBody = await r.text().catch(e => `[response body read failed: ${e.message}]`);
+      console.error(`[EMAIL FAILED] Brevo HTTP ${r.status} ${r.statusText}; response body: ${responseBody}`);
+      return false;
+    }
     return true;
-  } catch (e) { console.error('[EMAIL FAILED]', e.message); return false; } finally { clearTimeout(t); }
+  } catch (e) {
+    console.error('[EMAIL FAILED] Brevo request error:', e);
+    return false;
+  } finally { clearTimeout(t); }
 }
 module.exports = { sendEmail };
