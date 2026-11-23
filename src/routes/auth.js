@@ -68,7 +68,7 @@ router.post('/change-password', requireAuth, limit(10, 5 * 60 * 1000), wrap(asyn
 
 // POST /api/auth/forgot-password   { loginId }
 // Clients get an email link. Staff/admin have no email, so they must ask the owner to reset it.
-const SAME_ANSWER = { ok: true, message: 'If this account has an email on file, a reset link was sent. Staff and admin accounts: please ask the owner (Ramon Guerrero) to reset your password.' };
+const SAME_ANSWER = { ok: true, message: 'If this account has an email on file, a password reset link has been sent to your Gmail. Please check your Inbox or Spam folder.' };
 router.post('/forgot-password', limit(5, 15 * 60 * 1000), wrap(async (req, res) => {
   const id = String((req.body || {}).loginId || '').trim();
   if (id) {
