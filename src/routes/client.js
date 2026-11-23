@@ -10,7 +10,7 @@ const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
 // GET /api/client/me  -> account overview (dates are sent as plain YYYY-MM-DD text, no time-zone shifting)
 router.get('/me', wrap(async (req, res) => {
   const { rows } = await query(
-    `SELECT c.account_no, c.name, c.email, c.contact_no, c.address, c.status, c.status_reason, c.router_location, c.due_day,
+    `SELECT c.account_no, c.name, c.email, c.contact_no, c.address, c.status, c.current_balance, c.status_reason, c.router_location, c.due_day,
             c.registered_date::text AS registered_date, c.grace_end_date::text AS grace_end_date,
             p.plan_name, p.monthly_rate, b.name AS branch,
             EXISTS (SELECT 1 FROM payments y WHERE y.account_no = c.account_no AND y.status = 'Pending') AS has_pending,

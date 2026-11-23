@@ -10,6 +10,149 @@ router.use(requireAuth, requireRole('admin'));
 
 const SIX = "date_trunc('month', current_date) - interval '6 months'";
 
+function selectedMonth(value) {
+  if (!value) return null;
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : false;
+}
+
+const periodAnalyticsSql = `
+  WITH branch_scope AS (
+    SELECT branch_code, name FROM branches
+     WHERE ($2::text IS NULL OR branch_code=$2)
+  ),
+  status_snapshot AS (
+    SELECT c.account_no, c.branch_code,
+           CASE
+             WHEN $1::text IS NULL OR $1=TO_CHAR(current_date, 'YYYY-MM') THEN c.status
+             ELSE COALESCE((
+               SELECT h.new_status
+                 FROM account_status_log h
+                WHERE h.account_no=c.account_no
+                  AND TO_CHAR(h.changed_at, 'YYYY-MM') <= $1
+                ORDER BY h.changed_at DESC, h.log_id DESC
+                LIMIT 1
+             ), 'Active')
+           END AS status
+      FROM clients c
+     WHERE $1::text IS NULL
+        OR c.registered_date < (TO_DATE($1, 'YYYY-MM') + INTERVAL '1 month')::date
+  ),
+  client_totals AS (
+    SELECT c.branch_code, COUNT(*)::int AS client_count,
+           COUNT(*) FILTER (WHERE c.status='Active')::int AS active_count
+      FROM status_snapshot c JOIN branch_scope b USING (branch_code)
+     GROUP BY c.branch_code
+  ),
+  statement_totals AS (
+    SELECT c.branch_code, COALESCE(SUM(s.amount),0) AS billed,
+           COALESCE(SUM(s.amount_paid),0) AS collected,
+           COUNT(s.statement_id)::int AS statement_count,
+           COUNT(*) FILTER (WHERE s.send_status='Delivered')::int AS delivered_count
+      FROM branch_scope b
+      LEFT JOIN clients c USING (branch_code)
+      LEFT JOIN statements s ON s.account_no=c.account_no
+        AND ($1::text IS NULL OR TO_CHAR(s.billing_month, 'YYYY-MM')=$1)
+     GROUP BY c.branch_code
+  ),
+  registration_totals AS (
+    SELECT c.branch_code, COUNT(*)::int AS registrations
+      FROM clients c JOIN branch_scope b USING (branch_code)
+     WHERE ($1::text IS NULL OR TO_CHAR(c.registered_date, 'YYYY-MM')=$1)
+     GROUP BY c.branch_code
+  ),
+  cancellation_totals AS (
+    SELECT c.branch_code, COUNT(*)::int AS cancellations
+      FROM cancellation_requests r
+      JOIN clients c USING (account_no)
+      JOIN branch_scope b USING (branch_code)
+     WHERE r.status='Approved'
+       AND ($1::text IS NULL OR TO_CHAR(COALESCE(r.decided_at::date, r.request_date), 'YYYY-MM')=$1)
+     GROUP BY c.branch_code
+  ),
+  branch_data AS (
+    SELECT b.branch_code, b.name AS branch,
+           COALESCE(ct.client_count,0) AS clients,
+           COALESCE(ct.active_count,0) AS active,
+           COALESCE(st.billed,0) AS billed,
+           COALESCE(st.collected,0) AS collected,
+           CASE WHEN COALESCE(st.billed,0)=0 THEN 0
+                ELSE ROUND(COALESCE(st.collected,0)/st.billed*100,1) END AS collection_efficiency,
+           COALESCE(st.statement_count,0) AS statements,
+           COALESCE(st.delivered_count,0) AS delivered,
+           COALESCE(rt.registrations,0) AS registrations,
+           COALESCE(xt.cancellations,0) AS cancellations
+      FROM branch_scope b
+      LEFT JOIN client_totals ct USING (branch_code)
+      LEFT JOIN statement_totals st USING (branch_code)
+      LEFT JOIN registration_totals rt USING (branch_code)
+      LEFT JOIN cancellation_totals xt USING (branch_code)
+  ),
+  status_data AS (
+    SELECT c.status, COUNT(*)::int AS count
+      FROM status_snapshot c JOIN branch_scope b USING (branch_code)
+     GROUP BY c.status
+  )
+  SELECT
+    COALESCE((SELECT json_agg(json_build_object(
+      'branch_code', branch_code, 'branch', branch, 'clients', clients, 'active', active,
+      'billed', billed, 'collected', collected, 'collection_efficiency', collection_efficiency,
+      'statements', statements, 'delivered', delivered, 'registrations', registrations,
+      'cancellations', cancellations
+    ) ORDER BY branch_code) FROM branch_data), '[]'::json) AS branches,
+    COALESCE((SELECT json_agg(json_build_object('status', status, 'count', count) ORDER BY status)
+                FROM status_data), '[]'::json) AS statuses,
+    COALESCE((SELECT json_agg(payment) FROM (
+      SELECT json_build_object(
+        'payment_id', p.payment_id, 'account_no', p.account_no, 'name', c.name,
+        'branch', b.name, 'amount', p.amount, 'status', p.status,
+        'payment_date', COALESCE(p.payment_date, p.created_at::date)::text
+      ) AS payment
+        FROM payments p
+        JOIN clients c USING (account_no)
+        JOIN branch_scope b USING (branch_code)
+       WHERE ($1::text IS NULL OR TO_CHAR(COALESCE(p.payment_date, p.created_at::date), 'YYYY-MM')=$1)
+       ORDER BY COALESCE(p.payment_date, p.created_at::date) DESC, p.payment_id DESC
+       LIMIT 12
+    ) recent), '[]'::json) AS recent_payments`;
+
+async function loadPeriodAnalytics(month, branchCode) {
+  const { rows } = await query(periodAnalyticsSql, [month, branchCode || null]);
+  return rows[0];
+}
+
+// GET /api/admin/months -> months with statements or payments, plus the current month
+router.get('/months', async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT DISTINCT month
+         FROM (
+           SELECT TO_CHAR(billing_month, 'YYYY-MM') AS month FROM statements
+           UNION ALL
+           SELECT TO_CHAR(COALESCE(payment_date, created_at::date), 'YYYY-MM') FROM payments
+           UNION ALL
+           SELECT TO_CHAR(current_date, 'YYYY-MM')
+         ) available_months
+        ORDER BY month DESC`
+    );
+    res.json(rows.map(r => r.month));
+  } catch (e) {
+    console.error('GET /api/admin/months error:', e);
+    res.status(500).json({ error: 'Could not load billing months.' });
+  }
+});
+
+// GET /api/admin/dashboard?month=2026-10&branch=04
+router.get('/dashboard', async (req, res) => {
+  const month = selectedMonth(req.query.month);
+  if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
+  try {
+    res.json(await loadPeriodAnalytics(month, req.query.branch));
+  } catch (e) {
+    console.error('GET /api/admin/dashboard error:', e);
+    res.status(500).json({ error: 'Could not load dashboard analytics.' });
+  }
+});
+
 // GET /api/admin/clients?branch=04&status=Active
 router.get('/clients', async (req, res) => {
   try {
@@ -21,6 +164,7 @@ router.get('/clients', async (req, res) => {
               b.name AS branch,
               p.plan_name,
               p.monthly_rate,
+              c.current_balance,
               c.status,
               c.status_reason,
               c.due_day,
@@ -43,29 +187,32 @@ router.get('/clients', async (req, res) => {
   }
 });
 
-// GET /api/admin/statements?month=2026-10-01&branch=04
+// GET /api/admin/statements?month=2026-10&branch=04
 router.get('/statements', async (req, res) => {
+  const month = selectedMonth(req.query.month);
+  if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
   const { rows } = await query(
     `SELECT s.*, c.name, c.branch_code FROM statements s JOIN clients c USING (account_no)
-      WHERE s.billing_month >= (${SIX})
-        AND ($1::date IS NULL OR s.billing_month=$1) AND ($2::text IS NULL OR c.branch_code=$2)
-      ORDER BY s.billing_month DESC, s.account_no`, [req.query.month || null, req.query.branch || null]);
+      WHERE ($1::text IS NULL OR TO_CHAR(s.billing_month, 'YYYY-MM')=$1)
+        AND ($2::text IS NULL OR c.branch_code=$2)
+      ORDER BY s.billing_month DESC, s.account_no`, [month, req.query.branch || null]);
   res.json(rows);
 });
 
 // GET /api/admin/payments?month=2026-11&branch=04&status=Verified
 router.get('/payments', async (req, res) => {
+  const month = selectedMonth(req.query.month);
+  if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
   const { rows } = await query(
     `SELECT p.*, c.name, c.branch_code, b.name AS branch
        FROM payments p
        JOIN clients c USING (account_no)
        JOIN branches b ON b.branch_code = c.branch_code
-      WHERE p.created_at >= (${SIX})
-        AND ($1::text IS NULL OR to_char(COALESCE(p.payment_date, p.created_at::date), 'YYYY-MM') = $1)
+      WHERE ($1::text IS NULL OR TO_CHAR(COALESCE(p.payment_date, p.created_at::date), 'YYYY-MM') = $1)
         AND ($2::text IS NULL OR c.branch_code = $2)
         AND ($3::text IS NULL OR p.status = $3)
       ORDER BY COALESCE(p.payment_date, p.created_at::date) DESC, p.payment_id DESC`,
-    [req.query.month || null, req.query.branch || null, req.query.status || null]
+    [month, req.query.branch || null, req.query.status || null]
   );
   res.json(rows);
 });
@@ -128,20 +275,16 @@ router.get('/clients/:accountNo/status-log', async (req, res) => {
   res.json(rows);
 });
 
-// GET /api/admin/analytics?month=2026-10-01  -> Billed vs Collected + Collection Efficiency per branch
+// GET /api/admin/analytics?month=2026-10&branch=04
 router.get('/analytics', async (req, res) => {
-  const { rows } = await query(
-    `SELECT b.branch_code, b.name AS branch,
-            COALESCE(SUM(s.amount),0)      AS billed,
-            COALESCE(SUM(s.amount_paid),0) AS collected,
-            CASE WHEN COALESCE(SUM(s.amount),0)=0 THEN 0
-                 ELSE ROUND(SUM(s.amount_paid)/SUM(s.amount)*100,1) END AS collection_efficiency
-       FROM branches b
-       LEFT JOIN clients c ON c.branch_code=b.branch_code
-       LEFT JOIN statements s ON s.account_no=c.account_no AND s.billing_month=$1::date
-      GROUP BY b.branch_code, b.name ORDER BY b.branch_code`,
-    [req.query.month || new Date().toISOString().slice(0, 8) + '01']);
-  res.json(rows);
+  const month = selectedMonth(req.query.month);
+  if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
+  try {
+    res.json(await loadPeriodAnalytics(month, req.query.branch));
+  } catch (e) {
+    console.error('GET /api/admin/analytics error:', e);
+    res.status(500).json({ error: 'Could not load branch analytics.' });
+  }
 });
 
 // GET /api/admin/activity?branch=04  (6 months)

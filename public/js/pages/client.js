@@ -75,7 +75,7 @@ function stmtStatus(s) { return s.id == cur().id ? (inBillingNow() ? cycleLabel(
 function selectStmt(id) { selId = id; renderStatements(); }
 function downloadPdf(id, inv) {                                        // saves the PDF straight to the Downloads folder
   toast("Preparing your statement...");
-  fetch("/api/client/statements/" + id + "/pdf", { headers: { Authorization: "Bearer " + sessionStorage.getItem("fiberToken") } }).then(function (r) {
+  fetch("/api/client/statements/" + id + "/pdf", { headers: { Authorization: "Bearer " + sessionStorage.getItem("fiberToken") }, cache: "no-store" }).then(function (r) {
     if (r.status == 401) { sessionStorage.clear(); location.replace("index.html"); throw { status: 401 }; }
     if (!r.ok) throw { message: "Could not create the PDF." }; return r.blob();
   }).then(function (b) {

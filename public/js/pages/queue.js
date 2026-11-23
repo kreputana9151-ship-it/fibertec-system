@@ -54,7 +54,13 @@ function refreshPayments() {
   return Promise.all([
     apiCall("GET", "/api/staff/payments/queue").then(function (d) { PAY.queue = d.queue; PAY.metrics = d.metrics; }),
     apiCall("GET", "/api/staff/payments").then(function (d) { PAY.records = d.filter(function (r) { return r.status != "Pending"; }); }),
-    apiCall("GET", "/api/staff/activity").then(function (d) { PAY.activity = d; })
+    apiCall("GET", "/api/staff/activity").then(function (d) { PAY.activity = d; }),
+    apiCall("GET", "/api/staff/cancellations").then(function (rows) {
+      STAFF_REQUESTS = rows.map(function (r) {
+        return { id: r.request_id, acc: r.account_no, name: r.name, date: r.request_date, reason: r.reason, status: r.status };
+      });
+    }),
+    syncStaffClients()
   ]).then(function () { PAY.loaded = true; PAY.error = ""; PAY.at = Date.now(); })
     .catch(function (e) { if (e && e.status == 401) return; PAY.error = (e && e.message) || "Cannot reach the server."; })
     .then(function () { renderStaff(); });

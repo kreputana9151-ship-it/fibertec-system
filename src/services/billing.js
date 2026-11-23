@@ -42,7 +42,15 @@ async function generateStatementsForToday(today = new Date()) {
            RETURNING statement_id`,
           [invoiceNo(c.short_name, m, c.account_no), c.account_no, iso(m), iso(addDays(due, -7)), iso(due), amount]
         );
-        if (ins.rowCount) created++;
+        if (ins.rowCount) {
+          await cx.query(
+            `UPDATE clients
+                SET current_balance=$2
+              WHERE account_no=$1`,
+            [c.account_no, amount]
+          );
+          created++;
+        }
       });
     }
   }
@@ -128,13 +136,23 @@ async function runStatusEngine() {
    and return the account to Active if the full balance is cleared. */
 async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
   const p = (await c.query('SELECT * FROM payments WHERE payment_id=$1 FOR UPDATE', [paymentId])).rows[0];
+  if (!p || p.status !== 'Pending') throw new Error('Pending payment not found.');
   const s = (await c.query('SELECT * FROM statements WHERE statement_id=$1 FOR UPDATE', [p.statement_id])).rows[0];
+  if (!s || s.account_no !== p.account_no) throw new Error('Payment statement not found.');
+  if (Number(p.amount) > Number(s.balance)) throw new Error('Payment exceeds the remaining statement balance.');
 
   const paid = Number(s.amount_paid) + Number(p.amount);
   const balance = Math.max(Number(s.amount) - paid, 0);
   await c.query(
     'UPDATE statements SET amount_paid=$2, balance=$3, payment_status=$4 WHERE statement_id=$1',
     [s.statement_id, paid, balance, balance === 0 ? 'Paid' : 'Partially paid']
+  );
+  await c.query(
+    `UPDATE clients
+        SET current_balance=COALESCE(
+          (SELECT balance FROM statements WHERE account_no=$1 ORDER BY billing_month DESC LIMIT 1), 0)
+      WHERE account_no=$1`,
+    [p.account_no]
   );
 
   const orNo = p.or_no || `OR-${new Date().getFullYear()}-${String(paymentId).padStart(6, '0')}`;
@@ -143,8 +161,10 @@ async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
     [paymentId, orNo, staffUserId]
   );
 
-  if (balance === 0) {
-    const cl = (await c.query('SELECT status FROM clients WHERE account_no=$1', [p.account_no])).rows[0];
+  const cl = (await c.query(
+    'SELECT status, current_balance FROM clients WHERE account_no=$1 FOR UPDATE', [p.account_no]
+  )).rows[0];
+  if (Number(cl.current_balance) === 0) {
     if (['Grace Period', 'Under Review'].includes(cl.status))
       await changeStatus(c, p.account_no, 'Active', 'Full balance paid', staffUserId);
   }

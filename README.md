@@ -204,6 +204,7 @@ git push
 - Owner resets anyone's password (client, staff, or own): `POST /api/admin/users/:userId/reset-password {newPassword}` (find the user with `GET /api/admin/users?q=...`). The person must set their own password at next login.
 - Clients use **Forgot password?** on the login page to get an email link (valid 30 minutes). Staff/admin ask the owner.
 - Already ran the old `schema.sql`? Run `database/migrate_login_update.sql` once, then `npm run seed` is not needed again.
+- Existing databases also need `database/migrate_current_balance.sql` once to add and initialize the live client balance column.
 
 ## Custom address (instead of localhost:3000)
 1. Add this line to your hosts file, then save (Windows: open Notepad as Administrator, file `C:\Windows\System32\drivers\etc\hosts`; Mac/Linux: `sudo nano /etc/hosts`):

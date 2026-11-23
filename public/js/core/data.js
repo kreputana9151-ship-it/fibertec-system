@@ -24,7 +24,11 @@ function parseISO(s) { var p = s.split("-"); return new Date(+p[0], +p[1] - 1, +
 function addDays(s, n) { var d = parseISO(s); d.setDate(d.getDate() + n); return iso(d); }
 function dayDiff(a, b) { return Math.round((parseISO(a) - parseISO(b)) / 86400000); }
 function fmtD(s, short) { var d = parseISO(s); return MON[d.getMonth()] + " " + d.getDate() + (short ? "" : ", " + d.getFullYear()); }
-function monthLabel(k) { for (var i = 0; i < MONTHS.length; i++) if (MONTHS[i].k == k) return MONTHS[i].l; return k; }
+function monthLabel(k) {
+  if (!k) return "All Months";
+  for (var i = 0; i < MONTHS.length; i++) if (MONTHS[i].k == k) return MONTHS[i].l;
+  return new Date(k + "-01T00:00:00Z").toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+}
 function monShort(k) { return MON[+k.slice(5, 7) - 1] + " " + k.slice(0, 4); }
 function monthDay(k, day) { return k + "-" + ("0" + day).slice(-2); }
 

@@ -8,6 +8,7 @@ var LIVE = {
   statements: [],
   payments: [],
   notices: [],
+  months: [],
   loaded: false
 };
 
@@ -71,7 +72,7 @@ async function adminApi(path, opts) {
     headers["Authorization"] = "Bearer " + token;
   }
 
-  var fetchOpts = Object.assign({ credentials: "same-origin" }, opts, { headers: headers });
+  var fetchOpts = Object.assign({ credentials: "same-origin" }, opts, { headers: headers, cache: "no-store" });
   var res = await fetch("/api/admin" + path, fetchOpts);
   var data = await res.json().catch(function () { return {}; });
   if (!res.ok) throw new Error(data.error || ("Request failed (" + res.status + ")"));
@@ -83,7 +84,8 @@ async function syncAdminData() {
     adminApi("/clients"),
     adminApi("/statements"),
     adminApi("/payments"),
-    adminApi("/notices")
+    adminApi("/notices"),
+    adminApi("/months")
   ]);
 
   LIVE.clients = results[0].map(function (c) {
@@ -176,6 +178,7 @@ async function syncAdminData() {
     };
   });
 
+  LIVE.months = results[4];
   LIVE.loaded = true;
 }
 
@@ -212,14 +215,18 @@ function liveStatusCounts(list) {
 async function showAdmin(id) {
   showSection(ADMIN_PAGES, id, "a-");
   hideTip();
+  ACTIVE_ADMIN_PAGE = id;
+  var monthId = { dash: "d-month", billing: "b-month", analytics: "a-month" }[id];
+  if (monthId) $(monthId).value = new Date().toISOString().slice(0, 7);
   try {
     await syncAdminData();
   } catch (e) {
     toast("Database sync warning: " + e.message);
   }
-  ({ dash: renderDash, clients: renderClients, billing: renderBilling, pay: renderPayments, analytics: renderAnalytics, email: renderNotices })[id]();
+  await ({ dash: renderDash, clients: renderClients, billing: renderBilling, pay: renderPayments, analytics: renderAnalytics, email: renderNotices })[id]();
 }
 function pct(a, b) { return b ? Math.round(a / b * 1000) / 10 : 0; }
+var ACTIVE_ADMIN_PAGE = "dash", DASH_REQUEST = 0, ANALYTICS_REQUEST = 0;
 function branchScope(id) {
   var b = val(id);
   if (b) return [b];
@@ -229,68 +236,83 @@ function branchScope(id) {
 }
 
 /* ---------- Dashboard ---------- */
-function renderDash() {
-  var b = val("d-branch"), m = val("d-month") || new Date().toISOString().slice(0, 7);
-  var cl = liveClients(b), cnt = liveStatusCounts(cl);
-  var stm = liveStatements(m, b), billed = 0;
-  stm.forEach(function (s) { billed += s.amount; });
-  var pays = livePayments(m, b), coll = liveSumVerified(pays), out = Math.max(0, billed - coll);
+async function renderDash() {
+  var request = ++DASH_REQUEST, b = val("d-branch"), m = val("d-month");
+  ["d-stats", "branch-bars", "status-legend", "recent-pay"].forEach(function (id) { $(id).innerHTML = ""; });
+  $("dash-chart").innerHTML = "";
+  $("donut-n").innerHTML = "";
+  setDonut("status-donut", [0, 0, 0, 0], STATUS_COLORS);
+  try {
+    var data = await adminApi("/dashboard" + periodQuery(m, b));
+    if (request !== DASH_REQUEST) return;
+    var branches = data.branches || [], names = branches.map(function (x) { return x.branch; });
+    var cnt = { Active: 0, "Grace Period": 0, "Under Review": 0, Terminated: 0 };
+    (data.statuses || []).forEach(function (x) { if (cnt[x.status] !== undefined) cnt[x.status] = Number(x.count); });
+    var clients = branches.reduce(function (a, x) { return a + Number(x.clients); }, 0);
+    var billed = branches.reduce(function (a, x) { return a + Number(x.billed); }, 0);
+    var coll = branches.reduce(function (a, x) { return a + Number(x.collected); }, 0), out = Math.max(0, billed - coll);
 
-  $("d-stats").innerHTML =
-    '<div class="stat" style="background:#00417c"><b>Total Clients</b><span>' + cl.length + '</span><small>' + cnt.Active + ' active + ' + cnt["Grace Period"] + ' grace + ' + cnt["Under Review"] + ' review + ' + cnt.Terminated + ' terminated</small></div>' +
-    '<div class="stat" style="background:#5197d7"><b>Total Billed amount</b><span>' + peso(billed) + '</span><small>' + stm.length + ' statements</small></div>' +
-    '<div class="stat" style="background:#3167bd"><b>Total Collections Verified</b><span>' + peso(coll) + '</span><small>' + pct(coll, billed) + '% of billed</small></div>' +
-    '<div class="stat" style="background:#2daea6"><b>Total Outstanding Receivables</b><span>' + peso(out) + '</span><small>' + pct(out, billed) + '% of billed</small></div>';
+    $("d-stats").innerHTML =
+      '<div class="stat" style="background:#00417c"><b>Total Clients</b><span>' + clients + '</span><small>' + cnt.Active + ' active + ' + cnt["Grace Period"] + ' grace + ' + cnt["Under Review"] + ' review + ' + cnt.Terminated + ' terminated</small></div>' +
+      '<div class="stat" style="background:#5197d7"><b>Total Billed amount</b><span>' + peso(billed) + '</span><small>' + branches.reduce(function (a, x) { return a + Number(x.statements); }, 0) + ' statements</small></div>' +
+      '<div class="stat" style="background:#3167bd"><b>Total Collections Verified</b><span>' + peso(coll) + '</span><small>' + pct(coll, billed) + '% of billed</small></div>' +
+      '<div class="stat" style="background:#2daea6"><b>Total Outstanding Receivables</b><span>' + peso(out) + '</span><small>' + pct(out, billed) + '% of billed</small></div>';
 
-  var rows = "", tc = 0, ta = 0, tb = 0, tcol = 0;
-  branchScope("d-branch").forEach(function (bn) {
-    var bc = liveClients(bn), bs = liveStatements(m, bn), bb = 0;
-    bs.forEach(function (s) { bb += s.amount; });
-    var cc = liveSumVerified(livePayments(m, bn)), p = pct(cc, bb), act = liveStatusCounts(bc).Active;
-    tc += bc.length; ta += act; tb += bb; tcol += cc;
-    rows += "<tr><td>" + esc(bn) + "</td><td><div class='track' title='" + p + "% collected'><i style='width:0' data-w='" + Math.min(100, p) + "%'></i></div></td><td>" + bc.length + "</td><td>" + act + "</td><td>" + p + "%</td></tr>";
-  });
-  $("branch-bars").innerHTML = "<table class='bp'><thead><tr><th>Branch</th><th>Billing Cycle Progress</th><th>Clients</th><th>Active</th><th>Collected</th></tr></thead><tbody>" + rows + "</tbody><tfoot><tr><td>Total</td><td></td><td>" + tc + "</td><td>" + ta + "</td><td>" + pct(tcol, tb) + "%</td></tr></tfoot></table>";
-  growIn($("branch-bars"));
+    var rows = "", tc = 0, ta = 0, tb = 0, tcol = 0;
+    branches.forEach(function (x) {
+      var p = Number(x.collection_efficiency), clientsInBranch = Number(x.clients), active = Number(x.active);
+      tc += clientsInBranch; ta += active; tb += Number(x.billed); tcol += Number(x.collected);
+      rows += "<tr><td>" + esc(x.branch) + "</td><td><div class='track' title='" + p + "% collected'><i style='width:0' data-w='" + Math.min(100, p) + "%'></i></div></td><td>" + clientsInBranch + "</td><td>" + active + "</td><td>" + p + "%</td></tr>";
+    });
+    $("branch-bars").innerHTML = "<table class='bp'><thead><tr><th>Branch</th><th>Billing Cycle Progress</th><th>Clients</th><th>Active</th><th>Collected</th></tr></thead><tbody>" + rows + "</tbody><tfoot><tr><td>Total</td><td></td><td>" + tc + "</td><td>" + ta + "</td><td>" + pct(tcol, tb) + "%</td></tr></tfoot></table>";
+    growIn($("branch-bars"));
 
-  var vals = STATUSES.map(function (s) { return cnt[s] || 0; }), lg = "";
-  STATUSES.forEach(function (s, i) { lg += "<p><i style='background:" + STATUS_COLORS[i] + "'></i>" + s + "<span>" + vals[i] + "</span></p>"; });
-  setDonut("status-donut", vals, STATUS_COLORS);
-  $("donut-n").innerHTML = cl.length + "<small>clients</small>";
-  $("status-legend").innerHTML = lg + "<p class='total'>Total<span>" + cl.length + "</span></p>";
+    var vals = STATUSES.map(function (s) { return cnt[s] || 0; }), lg = "";
+    STATUSES.forEach(function (s, i) { lg += "<p><i style='background:" + STATUS_COLORS[i] + "'></i>" + s + "<span>" + vals[i] + "</span></p>"; });
+    setDonut("status-donut", vals, STATUS_COLORS);
+    $("donut-n").innerHTML = clients + "<small>clients</small>";
+    $("status-legend").innerHTML = lg + "<p class='total'>Total<span>" + clients + "</span></p>";
 
-  var names = branchScope("d-branch"), bl = [], co = [];
-  names.forEach(function (bn) {
-    var t = 0;
-    liveStatements(m, bn).forEach(function (s) { t += s.amount; });
-    bl.push(t);
-    co.push(liveSumVerified(livePayments(m, bn)));
-  });
-  barChart({
-    id: "dash-chart",
-    labels: names,
-    h: 210,
-    fmt: pesoPlainK,
-    sub: monthLabel(m),
-    series: [
-      { name: "Billed", color: C_BILLED, vals: bl, exact: function (v) { return pesoPlain(v); } },
-      { name: "Collected", color: C_COLL, vals: co, exact: function (v) { return pesoPlain(v); } }
-    ],
-    extra: function (i) { return "Collection rate: <b>" + pct(co[i], bl[i]) + "%</b> &middot; Outstanding: " + pesoPlain(Math.max(0, bl[i] - co[i])); }
-  });
+    var bl = branches.map(function (x) { return Number(x.billed); }), co = branches.map(function (x) { return Number(x.collected); });
+    barChart({
+      id: "dash-chart", labels: names, h: 210, fmt: pesoPlainK, sub: monthLabel(m),
+      series: [
+        { name: "Billed", color: C_BILLED, vals: bl, exact: function (v) { return pesoPlain(v); } },
+        { name: "Collected", color: C_COLL, vals: co, exact: function (v) { return pesoPlain(v); } }
+      ],
+      extra: function (i) { return "Collection rate: <b>" + pct(co[i], bl[i]) + "%</b> &middot; Outstanding: " + pesoPlain(Math.max(0, bl[i] - co[i])); }
+    });
 
-  var rp = pays.slice().sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : b._o - a._o; }).slice(0, 12);
-  var h = "<thead><tr><th>Date</th><th>Client Name</th><th>Amount</th><th>Status</th></tr></thead><tbody>";
-  rp.forEach(function (r) {
-    h += "<tr><td>" + fmtD(r.date) + "</td><td>" + esc(r.name) + "</td><td>" + peso(r.amount) + "</td><td>" + badgeFor(r.status) + "</td></tr>";
-  });
-  $("recent-pay").innerHTML = h + (rp.length ? "" : "<tr><td colspan='4' class='muted'>No payments for this selection.</td></tr>") + "</tbody>";
+    var rp = data.recent_payments || [];
+    var h = "<thead><tr><th>Date</th><th>Client Name</th><th>Amount</th><th>Status</th></tr></thead><tbody>";
+    rp.forEach(function (r) {
+      h += "<tr><td>" + fmtD(r.payment_date) + "</td><td>" + esc(r.name) + "</td><td>" + peso(r.amount) + "</td><td>" + badgeFor(r.status) + "</td></tr>";
+    });
+    $("recent-pay").innerHTML = h + (rp.length ? "" : "<tr><td colspan='4' class='muted'>No payments for this selection.</td></tr>") + "</tbody>";
+  } catch (e) {
+    if (request === DASH_REQUEST) toast("Dashboard data could not be loaded: " + e.message, "error");
+  }
 }
 function pesoPlainK(v) { return v >= 1000 ? "\u20B1" + (v / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 }) + "K" : "\u20B1" + v; }
+function periodQuery(month, branchName) {
+  var params = [];
+  if (month) params.push("month=" + encodeURIComponent(month));
+  if (branchName) params.push("branch=" + encodeURIComponent(branchCodeForName(branchName)));
+  return params.length ? "?" + params.join("&") : "";
+}
+function populateMonthFilters(defaultCurrent) {
+  var months = monthItems(), current = new Date().toISOString().slice(0, 7);
+  ["d-month", "b-month", "p-month", "a-month"].forEach(function (id) {
+    var selected = val(id);
+    fillSelect(id, "All Months", months);
+    var available = months.some(function (item) { return item.v === selected; });
+    $(id).value = available ? selected : (id === "p-month" || !defaultCurrent ? "" : current);
+  });
+}
 
 /* ---------- Billing ---------- */
 function billRows() {
-  var m = val("b-month") || new Date().toISOString().slice(0, 7), b = val("b-branch"), st = val("b-status"), q = val("b-search").trim().toLowerCase();
+  var m = val("b-month"), b = val("b-branch"), st = val("b-status"), q = val("b-search").trim().toLowerCase();
   var all = liveStatements(m, b);
   return {
     all: all,
@@ -301,7 +323,7 @@ function billRows() {
 }
 function onBillFilter() { pgReset("billing"); renderBilling(); }
 function renderBilling() {
-  var m = val("b-month") || new Date().toISOString().slice(0, 7), r = billRows(), cnt = { Delivered: 0, "Not Yet Sent": 0, Failed: 0 };
+  var m = val("b-month"), r = billRows(), cnt = { Delivered: 0, "Not Yet Sent": 0, Failed: 0 };
   r.all.forEach(function (s) { if (cnt[s.send] !== undefined) cnt[s.send]++; });
   $("b-stats").innerHTML =
     '<div class="stat" style="background:#3167bd"><b>Total Statements</b><span>' + r.all.length + '</span></div>' +
@@ -647,36 +669,36 @@ function renderMarkovCard(m, branchFilter) {
 }
 
 /* ---------- Branch analytics ---------- */
-function renderAnalytics() {
-  var b = val("a-branch"), m = val("a-month") || new Date().toISOString().slice(0, 7), names = branchScope("a-branch"), cl = liveClients(b);
-  var stm = liveStatements(m, b), billed = 0, deliv = 0;
-  stm.forEach(function (s) { billed += s.amount; if (s.send === "Delivered") deliv++; });
-  var coll = liveSumVerified(livePayments(m, b));
+async function renderAnalytics() {
+  var request = ++ANALYTICS_REQUEST, b = val("a-branch"), m = val("a-month"), cl = liveClients(b);
+  ["an-stats", "plan-legend", "anova", "markov"].forEach(function (id) { $(id).innerHTML = ""; });
+  ["an-chart", "reg-chart", "churn-chart"].forEach(function (id) { $(id).innerHTML = ""; });
+  $("plan-n").innerHTML = "";
+  setDonut("plan-donut", [0, 0, 0, 0], ["#1b7a8a", "#0d4f7a", "#f5a623", "#8fb8d0"]);
+  try {
+    var data = await adminApi("/analytics" + periodQuery(m, b));
+    if (request !== ANALYTICS_REQUEST) return;
+    var branches = data.branches || [], names = branches.map(function (x) { return x.branch; });
+    var billed = branches.reduce(function (a, x) { return a + Number(x.billed); }, 0);
+    var coll = branches.reduce(function (a, x) { return a + Number(x.collected); }, 0);
+    var delivered = branches.reduce(function (a, x) { return a + Number(x.delivered); }, 0);
+    var statementCount = branches.reduce(function (a, x) { return a + Number(x.statements); }, 0);
 
-  $("an-stats").innerHTML =
-    '<div class="stat" style="background:#013f70"><b>Total Revenue (verified payments)</b><span>' + peso(coll) + '</span></div>' +
-    '<div class="stat" style="background:#5197d7"><b>Collection Rate</b><span>' + pct(coll, billed) + '%</span><small>' + peso(coll) + ' of ' + peso(billed) + '</small></div>' +
-    '<div class="stat" style="background:#2daea6"><b>Billing Completion Rate</b><span>' + pct(deliv, stm.length) + '%</span><small>' + deliv + ' of ' + stm.length + ' statements delivered</small></div>';
+    $("an-stats").innerHTML =
+      '<div class="stat" style="background:#013f70"><b>Total Revenue (verified payments)</b><span>' + peso(coll) + '</span></div>' +
+      '<div class="stat" style="background:#5197d7"><b>Collection Rate</b><span>' + pct(coll, billed) + '%</span><small>' + peso(coll) + ' of ' + peso(billed) + '</small></div>' +
+      '<div class="stat" style="background:#2daea6"><b>Billing Completion Rate</b><span>' + pct(delivered, statementCount) + '%</span><small>' + delivered + ' of ' + statementCount + ' statements delivered</small></div>';
 
-  var bl = [], co = [];
-  names.forEach(function (bn) {
-    var t = 0;
-    liveStatements(m, bn).forEach(function (s) { t += s.amount; });
-    bl.push(t);
-    co.push(liveSumVerified(livePayments(m, bn)));
-  });
-  barChart({
-    id: "an-chart",
-    labels: names,
-    h: 230,
-    fmt: pesoPlainK,
-    sub: monthLabel(m),
-    series: [
-      { name: "Billed", color: C_BILLED, vals: bl, exact: pesoPlain },
-      { name: "Collected", color: C_COLL, vals: co, exact: pesoPlain }
-    ],
-    extra: function (i) { return "Collection rate: <b>" + pct(co[i], bl[i]) + "%</b>"; }
-  });
+    var bl = branches.map(function (x) { return Number(x.billed); });
+    var co = branches.map(function (x) { return Number(x.collected); });
+    barChart({
+      id: "an-chart", labels: names, h: 230, fmt: pesoPlainK, sub: monthLabel(m),
+      series: [
+        { name: "Billed", color: C_BILLED, vals: bl, exact: pesoPlain },
+        { name: "Collected", color: C_COLL, vals: co, exact: pesoPlain }
+      ],
+      extra: function (i) { return "Collection rate: <b>" + pct(co[i], bl[i]) + "%</b>"; }
+    });
 
   var planNames = [];
   cl.forEach(function (c) { if (c.plan && planNames.indexOf(c.plan) < 0) planNames.push(c.plan); });
@@ -691,16 +713,8 @@ function renderAnalytics() {
   $("plan-n").innerHTML = cl.length + "<small>clients</small>";
   $("plan-legend").innerHTML = lg + "<p class='total'>Total<span>" + cl.length + "</span></p>";
 
-  var reg = [], churn = [];
-  names.forEach(function (bn) {
-    var bc = liveClients(bn);
-    var regInMonth = bc.filter(function (c) { return c.created_month === m; }).length;
-    var termInMonth = bc.filter(function (c) {
-      return c.status === "Terminated" && (!c.terminated_month || c.terminated_month === m);
-    }).length;
-    reg.push(regInMonth);
-    churn.push(pct(termInMonth, bc.length));
-  });
+  var reg = branches.map(function (x) { return Number(x.registrations); });
+  var churn = branches.map(function (x) { return pct(Number(x.cancellations), Number(x.clients)); });
   barChart({
     id: "reg-chart",
     labels: names,
@@ -718,8 +732,11 @@ function renderAnalytics() {
     series: [{ name: "Monthly cancellation rate", color: "#d74548", vals: churn, exact: function (v) { return v + "%"; } }]
   });
 
-  renderAnovaCard(m, b);
-  renderMarkovCard(m, b);
+    renderAnovaCard(m, b);
+    renderMarkovCard(m, b);
+  } catch (e) {
+    if (request === ANALYTICS_REQUEST) toast("Analytics data could not be loaded: " + e.message, "error");
+  }
 }
 
 /* ---------- Email & portal notifications ---------- */
@@ -822,12 +839,9 @@ async function startAdmin() {
   var br = branchScope("");
   ["d-branch", "b-branch", "p-branch", "a-branch", "n-branch"].forEach(function (id) { fillSelect(id, "All Branches", br); });
   var curYm = new Date().toISOString().slice(0, 7);
-  var months = monthItems();
-  if (!months.some(function (x) { return x.k === curYm; })) {
-    months.unshift({ k: curYm, l: monthLabel(curYm) });
-  }
-  ["d-month", "b-month", "a-month"].forEach(function (id) { fillSelect(id, "", months); });
-  fillSelect("p-month", "All Months", months);
+  populateMonthFilters(true);
+  ["d-month", "b-month", "a-month"].forEach(function (id) { $(id).value = curYm; });
+  $("p-month").value = "";
   fillSelect("b-status", "All Status", ["Delivered", "Not Yet Sent", "Failed"]);
   fillSelect("p-method", "All Methods", ["GCash", "Cash"]);
   fillSelect("p-status", "All Statuses", ["Pending", "Verified", "Rejected"]);
@@ -835,6 +849,20 @@ async function startAdmin() {
   fillSelect("n-status", "All Status", ["Sent", "Not Yet Sent", "Failed"]);
   if (typeof initClientsView === "function") initClientsView();
   renderDash();
+  setInterval(function () {
+    if (document.hidden) return;
+    syncAdminData().then(function () {
+      populateMonthFilters(false);
+      if (ACTIVE_ADMIN_PAGE === "dash") return renderDash();
+      if (ACTIVE_ADMIN_PAGE === "billing") return renderBilling();
+      if (ACTIVE_ADMIN_PAGE === "pay") return renderPayments();
+      if (ACTIVE_ADMIN_PAGE === "analytics") return renderAnalytics();
+      if (ACTIVE_ADMIN_PAGE === "email") return renderNotices();
+      if (ACTIVE_ADMIN_PAGE === "clients") return renderClients();
+    }).catch(function (e) {
+      toast("Live data refresh failed: " + e.message, "error");
+    });
+  }, 15000);
 }
 
 if ($("d-stats") && requireRole("admin")) startAdmin();

@@ -18,7 +18,10 @@ function fillSelect(id, first, items, keep) {
 }
 function branchNames() { return BRANCHES.map(function (b) { return b.name; }); }
 function planNames() { return PLANS.map(function (p) { return p.n; }); }
-function monthItems() { return MONTHS.map(function (m) { return { v: m.k, l: m.l }; }); }
+function monthItems() {
+  var months = typeof LIVE != "undefined" ? LIVE.months : MONTHS.map(function (m) { return m.k; });
+  return months.map(function (m) { return { v: m, l: monthLabel(m) }; });
+}
 
 function api(path, body, token) {
   return fetch("/api/auth/" + path, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, token ? { Authorization: "Bearer " + token } : {}), body: JSON.stringify(body) })
@@ -27,7 +30,7 @@ function api(path, body, token) {
 function apiCall(method, path, body) {                                  // authenticated call to the backend
   var t = sessionStorage.getItem("fiberToken"), h = {};
   if (body) h["Content-Type"] = "application/json"; if (t) h.Authorization = "Bearer " + t;
-  return fetch(path, { method: method, headers: h, body: body ? JSON.stringify(body) : undefined }).then(function (r) {
+  return fetch(path, { method: method, headers: h, body: body ? JSON.stringify(body) : undefined, cache: "no-store" }).then(function (r) {
     return r.json().catch(function () { return {}; }).then(function (d) {
       if (r.status == 401) { sessionStorage.clear(); location.replace("index.html"); throw { status: 401, message: "Session expired" }; }
       if (!r.ok) throw { status: r.status, message: d.error || "Request failed" };

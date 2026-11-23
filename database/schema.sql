@@ -83,6 +83,7 @@ CREATE TABLE clients (
   grace_end_date     DATE,
   termination_date   DATE,
   termination_reason VARCHAR(60),
+  current_balance    NUMERIC(10,2) NOT NULL DEFAULT 0,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (branch_code, client_seq),
   CONSTRAINT chk_account_format CHECK (

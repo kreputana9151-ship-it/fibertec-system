@@ -14,7 +14,7 @@ router.get('/clients', async (req, res) => {
   try {
     const q = `%${req.query.q || ''}%`;
     const { rows } = await query(
-      `SELECT c.account_no, c.name, c.contact_no, c.email, c.address, c.status,
+      `SELECT c.account_no, c.name, c.contact_no, c.email, c.address, c.status, c.current_balance,
               c.status_reason, c.facebook, c.router_location,
               p.plan_id, p.plan_name, p.monthly_rate, c.due_day,
               TO_CHAR(c.registered_date, 'YYYY-MM-DD') AS registered_date,
@@ -219,7 +219,8 @@ router.post('/payments/cash', async (req, res) => {
     const out = await tx(async c => {
       const s = (await c.query(
         `SELECT s.* FROM statements s JOIN clients cl USING (account_no)
-          WHERE s.statement_id=$1 AND cl.branch_code=$2`, [statementId, req.user.branchCode])).rows[0];
+          WHERE s.statement_id=$1 AND cl.branch_code=$2
+          FOR UPDATE OF s`, [statementId, req.user.branchCode])).rows[0];
       if (!s) throw new Error('Statement not found in your branch.');
       const amt = Number(amount);
       if (!(amt > 0) || amt > Number(s.balance)) throw new Error('Payment amount must be greater than 0 and not exceed the remaining balance.');

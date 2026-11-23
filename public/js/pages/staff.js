@@ -1,9 +1,10 @@
 /* FiberTec - Staff portal (branch-scoped). Staff can verify payments and approve/reject cancellation requests,
    but cannot terminate or reactivate accounts (admin only). */
 var STAFF_PAGES = ["dash", "clients", "pay"];
+var STAFF_REQUESTS = [];
 function showStaff(id) { showSection(STAFF_PAGES, id, "nav-"); hideTip(); ({ dash: renderStaff, clients: renderClients, pay: renderStaff })[id](); }
-function myClients() { return clients.filter(function (c) { return c.branch == STAFF_BRANCH; }); }
-function myRequests(status) { return requests.filter(function (r) { return r.branch == STAFF_BRANCH && r.status == status; }); }
+function myClients() { return getAllActiveClients().filter(function (c) { return c.branch == STAFF_BRANCH; }); }
+function myRequests(status) { return STAFF_REQUESTS.filter(function (r) { return r.status == status; }); }
 function onClientsChanged() { renderStaff(); }
 
 function renderStaff() {
@@ -18,9 +19,9 @@ function renderStaff() {
   var top = mine.slice().sort(function (a, b) { return rank[a.status] - rank[b.status] || (a.balance > 0 ? 0 : 1) - (b.balance > 0 ? 0 : 1); }).slice(0, 6);
   $("dash-clients").innerHTML = top.map(function (c) { return "<div class='row-line' style='cursor:pointer' onclick='viewClient(\"" + c.no + "\")'><span>" + esc(c.name) + "<small>" + c.no + " &middot; " + c.plan + "</small></span>" + badgeFor(c.status) + "</div>"; }).join("") + "<p class='muted' style='margin:8px 6px 0'><a style='color:#2b86ff;cursor:pointer' onclick='showStaff(\"clients\")'>View all " + mine.length + " clients &rarr;</a></p>";
   /* cancellation requests */
-  var rq = myRequests("Pending"), done = requests.filter(function (r) { return r.branch == STAFF_BRANCH && r.status != "Pending"; }).slice(-3).reverse();
+  var rq = myRequests("Pending"), done = STAFF_REQUESTS.filter(function (r) { return r.status != "Pending"; }).slice(-3).reverse();
   $("dash-requests").innerHTML = (rq.length ? rq.map(function (r) { return "<div class='q-row'><span><b>" + esc(r.name) + "</b> (" + r.acc + ")<small>Requested " + fmtD(r.date) + " &middot; " + esc(r.reason) + "</small></span><button class='btn btn-green' onclick='askRequest(\"" + r.id + "\",true)'>Approve</button><button class='btn btn-red' onclick='askRequest(\"" + r.id + "\",false)'>Reject</button></div>"; }).join("") : "<p class='empty'>No pending cancellation requests.</p>") +
-    done.map(function (r) { return "<div class='row-line'><span>" + esc(r.name) + "<small>" + fmtD(r.date) + "</small></span>" + (r.status == "Approved" ? "<span class='badge orange'>Sent to Admin</span>" : "<span class='badge red'>Rejected</span>") + "</div>"; }).join("");
+    done.map(function (r) { return "<div class='row-line'><span>" + esc(r.name) + "<small>" + fmtD(r.date) + "</small></span>" + (r.status == "Approved" ? "<span class='badge red'>Terminated</span>" : "<span class='badge red'>Rejected</span>") + "</div>"; }).join("");
   $("req-count").innerHTML = rq.length;
   /* recent activity: what staff just did first, then seeded history from the branch's records */
   var dyn = S.act.filter(function (a) { return a.b == STAFF_BRANCH; }).reverse().map(function (a) { return { t: a.t, when: a.when }; });
@@ -29,9 +30,17 @@ function renderStaff() {
   renderStaffPay();
 }
 function askRequest(id, ok) {
-  var r = requests.filter(function (x) { return x.id == id; })[0];
-  confirmBox(ok ? "Approve cancellation" : "Reject cancellation", ok ? "Approve the cancellation request of <b>" + esc(r.name) + "</b>? The account will move to <b>Under Review</b> for the Administrator to decide." : "Reject the cancellation request of <b>" + esc(r.name) + "</b>? The account stays active.", ok ? "Yes, approve" : "Yes, reject", function () {
-    resolveCancelRequest(id, ok); toast(ok ? "Approved. Sent to Admin (Under Review)." : "Request rejected."); renderStaff(); if (!$("clients").classList.contains("hidden")) renderClients();
+  var r = STAFF_REQUESTS.filter(function (x) { return String(x.id) == String(id); })[0];
+  if (!r) return;
+  confirmBox(ok ? "Approve cancellation" : "Reject cancellation", ok ? "Approve the cancellation request of <b>" + esc(r.name) + "</b>? The account will be terminated." : "Reject the cancellation request of <b>" + esc(r.name) + "</b>? The account stays active.", ok ? "Yes, approve" : "Yes, reject", function () {
+    apiCall("PATCH", "/api/staff/cancellations/" + encodeURIComponent(id), { approve: ok }).then(function () {
+      toast(ok ? "Cancellation approved. The account was terminated." : "Cancellation request rejected.");
+      return refreshPayments();
+    }).then(function () {
+      if (!$("clients").classList.contains("hidden")) renderClients();
+    }).catch(function (e) {
+      if (e && e.status != 401) toast((e && e.message) || "Could not update the cancellation request.", "error");
+    });
   }, !ok);
 }
 

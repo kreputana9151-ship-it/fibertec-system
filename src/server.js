@@ -19,6 +19,15 @@ process.env.APP_URL = process.env.APP_URL || address;                // used in 
 
 const app = express();
 
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  delete req.headers['if-none-match'];
+  delete req.headers['if-modified-since'];
+  next();
+});
+
 // Always trust Render / reverse proxy headers in production so secure cookies and req.secure work
 if (process.env.TRUST_PROXY === 'true' || isProd) {
   app.set('trust proxy', 1);
