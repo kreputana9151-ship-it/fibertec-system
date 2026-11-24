@@ -188,6 +188,17 @@ CREATE TABLE cancellation_requests (
   created_at       TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
+CREATE TABLE password_reset_requests (
+  id           INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  account_no   CHAR(8) NOT NULL REFERENCES clients(account_no),
+  client_name  VARCHAR(100) NOT NULL,
+  status       VARCHAR(10) NOT NULL DEFAULT 'Pending'
+               CHECK (status IN ('Pending','Resolved')),
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at  TIMESTAMPTZ,
+  resolved_by  INT REFERENCES users(user_id)
+);
+
 -- ---------------------------------------------------------------------
 -- 8. Activity / audit log (staff and admin actions)
 -- ---------------------------------------------------------------------
@@ -214,6 +225,8 @@ CREATE UNIQUE INDEX uq_payments_one_pending_per_account
   ON payments(account_no) WHERE status='Pending';
 CREATE UNIQUE INDEX uq_cancellations_one_pending_per_account
   ON cancellation_requests(account_no) WHERE status='Pending';
+CREATE UNIQUE INDEX uq_password_reset_requests_one_pending_per_account
+  ON password_reset_requests(account_no) WHERE status='Pending';
 CREATE INDEX idx_statements_acct   ON statements(account_no, billing_month);
 CREATE INDEX idx_notices_account   ON notices(account_no, notice_date);
 

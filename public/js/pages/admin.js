@@ -8,6 +8,7 @@ var LIVE = {
   statements: [],
   payments: [],
   notices: [],
+  passwordResetRequests: [],
   months: [],
   loaded: false
 };
@@ -93,7 +94,8 @@ async function syncAdminData() {
     adminApi("/statements"),
     adminApi("/payments"),
     adminApi("/notices"),
-    adminApi("/months")
+    adminApi("/months"),
+    adminApi("/password-reset-requests")
   ]);
 
   LIVE.clients = results[0].map(function (c) {
@@ -197,6 +199,7 @@ async function syncAdminData() {
     };
   });
 
+  LIVE.passwordResetRequests = results[5];
   LIVE.months = results[4];
   LIVE.loaded = true;
 }
@@ -242,6 +245,7 @@ async function showAdmin(id) {
   } catch (e) {
     toast("Database sync warning: " + e.message);
   }
+  updatePasswordResetBadge();
   await ({ dash: renderDash, clients: renderClients, billing: renderBilling, pay: renderPayments, analytics: renderAnalytics, email: renderNotices })[id]();
   ADMIN_RENDERED_SIGNATURE = adminDataSignature();
 }
@@ -252,7 +256,7 @@ function pct(a, b) {
 var ACTIVE_ADMIN_PAGE = "dash", DASH_REQUEST = 0, ANALYTICS_REQUEST = 0;
 var ADMIN_CANCEL_REQUEST = 0, ADMIN_CANCEL_POLL = null, ADMIN_CANCEL_SIGNATURE = "", ADMIN_POLL_RUNNING = false, ADMIN_RENDERED_SIGNATURE = "";
 function adminDataSignature() {
-  return JSON.stringify([LIVE.clients, LIVE.statements, LIVE.payments, LIVE.notices, LIVE.months]);
+  return JSON.stringify([LIVE.clients, LIVE.statements, LIVE.payments, LIVE.notices, LIVE.passwordResetRequests, LIVE.months]);
 }
 function branchScope(id) {
   var b = val(id);
@@ -823,9 +827,54 @@ function noticeRows(skipTab) {
     return (!b || n.branch === b) && (!ty || n.type === ty) && (!st || n.status === st) && (!q || (n.acc + " " + n.name + " " + n.recipient).toLowerCase().indexOf(q) >= 0);
   });
 }
+function updatePasswordResetBadge() {
+  var badge = $("password-reset-nav-badge");
+  if (!badge) return;
+  var count = LIVE.passwordResetRequests.length;
+  badge.textContent = count;
+  badge.style.display = count ? "" : "none";
+  badge.setAttribute("aria-label", count + " pending password reset request" + (count === 1 ? "" : "s"));
+}
+function renderPasswordResetRequests() {
+  updatePasswordResetBadge();
+  var count = $("password-reset-panel-count"), table = $("password-reset-requests-table");
+  if (!table) return;
+  if (count) count.textContent = LIVE.passwordResetRequests.length;
+  var html = "<thead><tr><th>Account No.</th><th>Client Name</th><th>Requested At (Asia/Manila)</th><th>Action</th></tr></thead><tbody>";
+  LIVE.passwordResetRequests.forEach(function (request) {
+    html += "<tr><td>" + esc(request.account_no) + "</td><td>" + esc(request.client_name) + "</td><td>" +
+      esc(request.requested_at_manila) + "</td><td><button class='action' onclick='resolvePasswordResetRequest(" +
+      Number(request.id) + ",this)'>Reset Password</button></td></tr>";
+  });
+  if (!LIVE.passwordResetRequests.length) html += "<tr><td colspan='4' class='muted' style='height:56px;text-align:center'>No pending password reset requests.</td></tr>";
+  table.innerHTML = html + "</tbody>";
+}
+async function resolvePasswordResetRequest(id, button) {
+  if (button) { button.disabled = true; button.textContent = "Resetting..."; }
+  try {
+    var result = await adminApi("/password-reset-requests/" + encodeURIComponent(id) + "/reset", { method: "POST" });
+    LIVE.passwordResetRequests = LIVE.passwordResetRequests.filter(function (request) { return Number(request.id) !== Number(id); });
+    updatePasswordResetBadge();
+    renderNotices();
+    ADMIN_RENDERED_SIGNATURE = adminDataSignature();
+    showTemporaryClientPassword(result.temporaryPassword, result.clientName, result.accountNo);
+    try {
+      await syncAdminData();
+      updatePasswordResetBadge();
+      renderNotices();
+      ADMIN_RENDERED_SIGNATURE = adminDataSignature();
+    } catch (e) {
+      toast("Password reset succeeded, but the request list could not be refreshed: " + e.message, "error");
+    }
+  } catch (e) {
+    if (button && button.isConnected) { button.disabled = false; button.textContent = "Reset Password"; }
+    toast(e.message || "Could not reset the client password.", "error");
+  }
+}
 function onNoticeFilter() { pgReset("notice"); renderNotices(); }
 function setNoticeTab(t) { NT.tab = t; pgReset("notice"); renderNotices(); }
 function renderNotices() {
+  renderPasswordResetRequests();
   var all = LIVE.notices, base = noticeRows(true), rows = noticeRows(false), em = 0, po = 0, fl = 0;
   all.forEach(function (n) {
     if (n.channel === "Email" && n.status === "Sent") em++;
@@ -911,6 +960,7 @@ async function startAdmin() {
   } catch (e) {
     toast("Failed to load live database records: " + e.message);
   }
+  updatePasswordResetBadge();
   var br = branchScope("");
   ["d-branch", "b-branch", "p-branch", "a-branch", "n-branch"].forEach(function (id) { fillSelect(id, "All Branches", br); });
   var curYm = new Date().toISOString().slice(0, 7);
@@ -931,6 +981,7 @@ async function startAdmin() {
     try {
       await syncAdminData();
       if (liveRefreshPaused()) return;
+      updatePasswordResetBadge();
       var signature = adminDataSignature();
       if (signature === ADMIN_RENDERED_SIGNATURE) return;
       populateMonthFilters(false);

@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const { query, tx } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { sendEmail } = require('../services/mailer');
+const { logActivity } = require('../services/audit');
 
 const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
 const sha256 = t => crypto.createHash('sha256').update(t).digest('hex');
@@ -25,7 +26,8 @@ const USER_SQL = `SELECT u.user_id, u.login_id, u.password_hash, u.role, u.is_ac
                          CASE WHEN u.login_locked_until > now()
                               THEN GREATEST(CEIL(EXTRACT(EPOCH FROM (u.login_locked_until - now())) / 60)::int, 1)
                               ELSE 0 END AS lock_minutes,
-                         s.branch_code AS staff_branch, b.name AS branch_name, c.account_no, c.email
+                         s.branch_code AS staff_branch, b.name AS branch_name,
+                         c.account_no, c.email, c.name AS client_name
                     FROM users u
                     LEFT JOIN staff    s ON s.user_id = u.user_id
                     LEFT JOIN branches b ON b.branch_code = s.branch_code
@@ -113,6 +115,64 @@ router.post('/change-password', requireAuth, limit(10, 5 * 60 * 1000), wrap(asyn
   });
   if (!changed) return res.status(401).json({ error: 'Current password is wrong' });
   res.json({ ok: true });
+}));
+
+// POST /api/auth/request-password-reset { loginId }
+router.post('/request-password-reset', limit(5, 15 * 60 * 1000), wrap(async (req, res) => {
+  const body = req.body || {};
+  const loginId = body.loginId || body.accountNo || body.email || body.username;
+  if (typeof loginId !== 'string' || !loginId.trim()) {
+    return res.status(400).json({ error: 'Enter your account number, registered email, or username.' });
+  }
+  if (/\s/.test(loginId)) {
+    return res.status(400).json({ error: 'Account number, email, or username must not contain whitespace.' });
+  }
+
+  try {
+    const result = await tx(async c => {
+      const rows = await findUsers(loginId, c, true);
+      if (rows.length > 1) {
+        return { status: 400, body: { error: 'More than one account uses this email. Enter your account number instead.' } };
+      }
+      const user = rows[0];
+      if (!user || user.role !== 'client' || !user.is_active) {
+        return { status: 404, body: { error: 'No active client account matches those details.' } };
+      }
+
+      const pending = await c.query(
+        `SELECT id FROM password_reset_requests
+          WHERE account_no=$1 AND status='Pending' LIMIT 1`,
+        [user.account_no]
+      );
+      if (pending.rowCount) {
+        return {
+          status: 409,
+          body: { error: 'A password reset request is already pending. Please contact or wait for the Admin to provide your temporary password.' }
+        };
+      }
+
+      await c.query(
+        'INSERT INTO password_reset_requests (account_no, client_name) VALUES ($1,$2)',
+        [user.account_no, user.client_name]
+      );
+      await logActivity(c, user.user_id, null, `Client ${user.account_no} (${user.client_name}) requested a password reset`);
+      return {
+        status: 201,
+        body: {
+          ok: true,
+          message: 'Password reset request submitted. Please contact or wait for the Admin to provide your temporary password.'
+        }
+      };
+    });
+    res.status(result.status).json(result.body);
+  } catch (e) {
+    if (e.code === '23505' && e.constraint === 'uq_password_reset_requests_one_pending_per_account') {
+      return res.status(409).json({
+        error: 'A password reset request is already pending. Please contact or wait for the Admin to provide your temporary password.'
+      });
+    }
+    throw e;
+  }
 }));
 
 // POST /api/auth/forgot-password   { loginId }

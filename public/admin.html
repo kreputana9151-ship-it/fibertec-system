@@ -22,7 +22,7 @@
       <a id="a-billing" title="Billing" onclick="showAdmin('billing')"><img src="images/icons/document.png" alt=""><span class="label">Billing</span></a>
       <a id="a-pay" title="Payments" onclick="showAdmin('pay')"><img src="images/icons/wallet.png" alt=""><span class="label">Payments</span></a>
       <a id="a-analytics" title="Branch Analytics" onclick="showAdmin('analytics')"><img src="images/icons/analytics.png" alt=""><span class="label">Branch Analytics</span></a>
-      <a id="a-email" title="Email &amp; Portal" onclick="showAdmin('email')"><img src="images/icons/doorbell.png" alt=""><span class="label">Email &amp; Portal</span></a>
+      <a id="a-email" title="Email &amp; Portal" onclick="showAdmin('email')"><img src="images/icons/doorbell.png" alt=""><span class="label">Email &amp; Portal</span><span id="password-reset-nav-badge" class="badge orange" style="display:none;min-width:22px" aria-live="polite">0</span></a>
     </nav>
     <button class="toggle" onclick="toggleSidebar()" title="Collapse / expand sidebar"><img src="images/icons/sidebar-toggle.png" alt="Toggle sidebar"></button>
   </aside>
@@ -154,6 +154,11 @@
     <!-- EMAIL & PORTAL -->
     <section id="email" class="hidden">
       <h1>EMAIL &amp; PORTAL NOTIFICATIONS</h1>
+      <div class="dcard" style="margin-bottom:14px">
+        <p class="sec">Password Reset Requests <span id="password-reset-panel-count" class="badge orange">0</span></p>
+        <p class="muted">Reset the client password to resolve the request. The temporary password is displayed once.</p>
+        <div class="tscroll"><table id="password-reset-requests-table" aria-live="polite"></table></div>
+      </div>
       <div class="stats" id="n-stats"></div>
       <div class="filters">
         <input type="text" class="search" id="n-search" placeholder="Search Account No. or Client Name" oninput="onNoticeFilter()">
@@ -175,7 +180,7 @@
 <script src="js/core/input-guard.js"></script>
 <script src="js/core/data.js"></script>
 <script src="js/core/common.js?v=2"></script>
-<script src="js/shared/clients.js?v=7"></script>
-<script src="js/pages/admin.js?v=6"></script>
+<script src="js/shared/clients.js?v=8"></script>
+<script src="js/pages/admin.js?v=7"></script>
 </body>
 </html>

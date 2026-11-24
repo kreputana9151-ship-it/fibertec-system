@@ -410,16 +410,23 @@ function resetClientPassword(no) {
 async function issueClientTemporaryPassword(no) {
   try {
     var result = await adminApi("/clients/" + encodeURIComponent(no) + "/reset-password", { method: "POST" });
-    modal2(
-      "<div class='dlg-head'>Temporary password<button class='x' onclick='closeModal()'>&times;</button></div>" +
-      "<div class='dlg-body'><div class='warn amber'><b>Show this password to the client securely.</b> It will not be available in the portal again. The client must set a new password after signing in.</div>" +
-      "<label>Temporary password</label><input id='temporary-client-password' readonly onclick='this.select()' value='" + esc(result.temporaryPassword) + "'>" +
-      "<div class='dlg-foot'><button class='btn' onclick='copyTemporaryClientPassword(this)'>Copy password</button>" +
-      "<button class='btn btn-light' onclick='closeModal()'>Done</button></div></div>"
-    );
+    var client = findClientRecord(no);
+    showTemporaryClientPassword(result.temporaryPassword, client && client.name, no);
   } catch (e) {
     toast(e.message || "Could not reset the client password.", "error");
   }
+}
+
+function showTemporaryClientPassword(temporaryPassword, clientName, accountNo) {
+  var clientLabel = [clientName, accountNo].filter(Boolean).map(esc).join(" (") + (clientName && accountNo ? ")" : "");
+  modal2(
+    "<div class='dlg-head'>Temporary password<button class='x' onclick='closeModal()'>&times;</button></div>" +
+    "<div class='dlg-body'>" + (clientLabel ? "<p><b>" + clientLabel + "</b></p>" : "") +
+    "<div class='warn amber'><b>Show this password to the client securely.</b> It will not be available in the portal again. The client must set a new password after signing in.</div>" +
+    "<label>Temporary password</label><input id='temporary-client-password' readonly onclick='this.select()' value='" + esc(temporaryPassword) + "'>" +
+    "<div class='dlg-foot'><button class='btn' onclick='copyTemporaryClientPassword(this)'>Copy password</button>" +
+    "<button class='btn btn-light' onclick='closeModal()'>Done</button></div></div>"
+  );
 }
 
 function copyTemporaryClientPassword(button) {

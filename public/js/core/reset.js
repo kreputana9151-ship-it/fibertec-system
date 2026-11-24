@@ -5,6 +5,14 @@ function send(path, body) {
     .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); });
 }
 function show(id, msg, good) { var e = document.getElementById(id); e.className = good ? "ok" : "error"; e.textContent = msg; }
+function requestAdminReset() {
+  var id = document.getElementById("fp-id").value;
+  if (!id) return show("fp-msg", "Please enter your account number, email, or username.");
+  if (/\s/.test(id)) return show("fp-msg", "Account number, email, or username must not contain whitespace.");
+  send("request-password-reset", { loginId: id }).then(function (r) {
+    show("fp-msg", r.data.message || r.data.error || "Could not submit the request.", r.ok);
+  }).catch(function () { show("fp-msg", "Cannot reach the server. Please try again."); });
+}
 function requestLink() {
   var id = document.getElementById("fp-id").value;
   if (!id) return show("fp-msg", "Please enter your account number or email.");

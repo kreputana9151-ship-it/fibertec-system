@@ -17,6 +17,31 @@ function selectedMonth(value) {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : false;
 }
 
+async function setTemporaryClientPassword(c, accountNo) {
+  const target = (await c.query(
+    `SELECT u.user_id
+       FROM users u JOIN clients cl ON cl.user_id=u.user_id
+      WHERE cl.account_no=$1 AND u.role='client'
+      FOR UPDATE OF u`,
+    [accountNo]
+  )).rows[0];
+  if (!target) throw Object.assign(new Error('Client account not found.'), { status: 404 });
+
+  const temporaryPassword = `Ft-${crypto.randomBytes(9).toString('hex')}`;
+  await c.query(
+    `UPDATE users
+        SET password_hash=$2, must_change_password=TRUE,
+            failed_login_attempts=0, login_locked_until=NULL
+      WHERE user_id=$1`,
+    [target.user_id, await bcrypt.hash(temporaryPassword, 10)]
+  );
+  await c.query(
+    'UPDATE password_resets SET used_at=COALESCE(used_at, now()) WHERE user_id=$1 AND used_at IS NULL',
+    [target.user_id]
+  );
+  return temporaryPassword;
+}
+
 const periodAnalyticsSql = `
   WITH branch_scope AS (
     SELECT branch_code, name FROM branches
@@ -151,6 +176,54 @@ router.get('/dashboard', async (req, res) => {
   } catch (e) {
     console.error('GET /api/admin/dashboard error:', e);
     res.status(500).json({ error: 'Could not load dashboard analytics.' });
+  }
+});
+
+// GET /api/admin/password-reset-requests
+router.get('/password-reset-requests', async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT id, account_no, client_name, status,
+              TO_CHAR(requested_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD HH24:MI:SS') AS requested_at_manila
+         FROM password_reset_requests
+        WHERE status='Pending'
+        ORDER BY requested_at, id`
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('GET /api/admin/password-reset-requests error:', e);
+    res.status(500).json({ error: 'Could not load password reset requests.' });
+  }
+});
+
+// POST /api/admin/password-reset-requests/:id/reset
+router.post('/password-reset-requests/:id/reset', async (req, res) => {
+  if (!/^[0-9]+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid password reset request.' });
+  try {
+    const result = await tx(async c => {
+      const request = (await c.query(
+        `SELECT id, account_no, client_name
+           FROM password_reset_requests
+          WHERE id=$1::integer AND status='Pending'
+          FOR UPDATE`,
+        [req.params.id]
+      )).rows[0];
+      if (!request) throw Object.assign(new Error('Pending password reset request not found.'), { status: 404 });
+
+      const temporaryPassword = await setTemporaryClientPassword(c, request.account_no);
+      await c.query(
+        `UPDATE password_reset_requests
+            SET status='Resolved', resolved_at=now(), resolved_by=$2
+          WHERE id=$1`,
+        [request.id, req.user.userId]
+      );
+      await logActivity(c, req.user.userId, null, `Resolved password reset request #${request.id} for ${request.account_no}`);
+      return { accountNo: request.account_no, clientName: request.client_name, temporaryPassword };
+    });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error('POST /api/admin/password-reset-requests/:id/reset error:', e);
+    res.status(e.status || 500).json({ error: e.status ? e.message : 'Could not reset the client password.' });
   }
 });
 
@@ -403,28 +476,10 @@ router.post('/clients/:accountNo/reset-password', async (req, res) => {
   const accountNo = String(req.params.accountNo || '').trim();
   if (!/^[0-9]{8}$/.test(accountNo)) return res.status(400).json({ error: 'Account number must be 8 digits.' });
   try {
-    const temporaryPassword = `Ft-${crypto.randomBytes(9).toString('hex')}`;
-    await tx(async c => {
-      const target = (await c.query(
-        `SELECT u.user_id
-           FROM users u JOIN clients cl ON cl.user_id=u.user_id
-          WHERE cl.account_no=$1 AND u.role='client'
-          FOR UPDATE OF u`,
-        [accountNo]
-      )).rows[0];
-      if (!target) throw Object.assign(new Error('Client account not found.'), { status: 404 });
-      await c.query(
-        `UPDATE users
-            SET password_hash=$2, must_change_password=TRUE,
-                failed_login_attempts=0, login_locked_until=NULL
-          WHERE user_id=$1`,
-        [target.user_id, await bcrypt.hash(temporaryPassword, 10)]
-      );
-      await c.query(
-        'UPDATE password_resets SET used_at=COALESCE(used_at, now()) WHERE user_id=$1 AND used_at IS NULL',
-        [target.user_id]
-      );
+    const temporaryPassword = await tx(async c => {
+      const password = await setTemporaryClientPassword(c, accountNo);
       await logActivity(c, req.user.userId, null, `Reset client password for ${accountNo}`);
+      return password;
     });
     res.json({ ok: true, temporaryPassword });
   } catch (e) {
