@@ -7,9 +7,10 @@ const { sendStatement, generateStatementsForToday, runStatusEngine } = require('
 const { changeStatus, logActivity } = require('../services/audit');
 const { sendEmail } = require('../services/mailer');
 const { publicErrorMessage, publicErrorStatus } = require('../utils/publicError');
+const { installedDateError } = require('../utils/businessDate');
 
 router.use(requireAuth, requireRole('admin'));
-// admin sees ALL branches. History shown to admin = last 6 months (purge job deletes older rows)
+// Admin sees all branches; billing history is retained, while activity feeds use a six-month window.
 
 const SIX = "date_trunc('month', current_date) - interval '6 months'";
 
@@ -147,19 +148,23 @@ async function loadPeriodAnalytics(month, branchCode) {
   return rows[0];
 }
 
-// GET /api/admin/months -> months with statements or payments, plus the current month
+// GET /api/admin/months -> continuous month range from the earliest billing/install date to Manila today
 router.get('/months', async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT DISTINCT month
-         FROM (
-           SELECT TO_CHAR(billing_month, 'YYYY-MM') AS month FROM statements
-           UNION ALL
-           SELECT TO_CHAR(COALESCE(payment_date, created_at::date), 'YYYY-MM') FROM payments
-           UNION ALL
-           SELECT TO_CHAR(current_date, 'YYYY-MM')
-         ) available_months
-        ORDER BY month DESC`
+      `WITH bounds AS (
+         SELECT date_trunc('month', LEAST(
+                  COALESCE((SELECT MIN(billing_month) FROM statements), (SELECT MIN(installed_date) FROM clients)),
+                  COALESCE((SELECT MIN(installed_date) FROM clients), (SELECT MIN(billing_month) FROM statements))
+                ))::date AS first_month,
+                date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date)::date AS last_month
+       )
+       SELECT TO_CHAR(generated.month_start, 'YYYY-MM') AS month
+         FROM bounds
+         CROSS JOIN LATERAL generate_series(
+           COALESCE(first_month, last_month), last_month, INTERVAL '1 month'
+         ) AS generated(month_start)
+        ORDER BY generated.month_start DESC`
     );
     res.json(rows.map(r => r.month));
   } catch (e) {
@@ -285,6 +290,7 @@ router.get('/clients', async (req, res) => {
               c.facebook,
               c.router_location,
               TO_CHAR(c.registered_date, 'YYYY-MM-DD') AS registered_date,
+              TO_CHAR(c.installed_date, 'YYYY-MM-DD') AS installed_date,
               TO_CHAR(c.termination_date, 'YYYY-MM-DD') AS termination_date,
               TO_CHAR(c.registered_date, 'YYYY-MM') AS created_month,
               TO_CHAR(c.termination_date, 'YYYY-MM') AS terminated_month,
@@ -430,9 +436,16 @@ router.patch('/clients/:accountNo', async (req, res) => {
   const planId = Number(b.planId);
   const facebook = String(b.facebook || '').trim() || null;
   const routerLocation = String(b.routerLocation || '').trim() || null;
+  const installedDate = b.installedDate === undefined && b.installed_date === undefined
+    ? null
+    : (b.installedDate || b.installed_date);
 
   if (!name || !contactNo || !email || !address || !Number.isInteger(planId)) {
     return res.status(400).json({ error: 'Please complete the client name, contact number, email, address, and plan.' });
+  }
+  if (installedDate !== null) {
+    const installedDateIssue = installedDateError(installedDate);
+    if (installedDateIssue) return res.status(400).json({ error: installedDateIssue });
   }
   if (/\s/.test(email)) {
     return res.status(400).json({ error: 'Client email must not contain whitespace.' });
@@ -458,13 +471,35 @@ router.patch('/clients/:accountNo', async (req, res) => {
       if (dup.rows.length) throw new Error('Another client account already uses this email address.');
       const plan = await c.query('SELECT 1 FROM plans WHERE plan_id=$1', [planId]);
       if (!plan.rows.length) throw new Error('Selected internet plan was not found.');
+      if (installedDate !== null) {
+        const current = await c.query(
+          'SELECT installed_date::text AS installed_date FROM clients WHERE account_no=$1 FOR UPDATE',
+          [req.params.accountNo]
+        );
+        if (!current.rows.length) throw Object.assign(new Error('Client not found.'), { status: 404 });
+        if (current.rows[0].installed_date !== installedDate) {
+          const history = await c.query(
+            'SELECT 1 FROM statements WHERE account_no=$1 LIMIT 1',
+            [req.params.accountNo]
+          );
+          if (history.rowCount) {
+            throw Object.assign(
+              new Error('Installed date cannot be changed after billing statements have been generated.'),
+              { status: 409 }
+            );
+          }
+        }
+      }
 
       const updated = await c.query(
         `UPDATE clients
             SET name=$2, contact_no=$3, email=$4, address=$5, plan_id=$6,
-                router_location=$7, facebook=$8
+                router_location=$7, facebook=$8,
+                installed_date=COALESCE($9::date, installed_date),
+                due_day=COALESCE($10::smallint, due_day)
           WHERE account_no=$1`,
-        [req.params.accountNo, name, contactNo, email, address, planId, routerLocation, facebook]
+        [req.params.accountNo, name, contactNo, email, address, planId, routerLocation, facebook,
+          installedDate, installedDate === null ? null : Number(installedDate.slice(8, 10))]
       );
       if (!updated.rowCount) throw new Error('Client not found.');
     });

@@ -96,7 +96,7 @@ function getAllActiveClients() {
         overdue_due_date: c.overdue_due_date || "",
         termDate: c.termination_date ? String(c.termination_date).slice(0, 10) : "",
         termReason: c.termination_reason || c.status_reason || "",
-        installed: c.registered_date ? String(c.registered_date).slice(0, 10) : "",
+        installed: (c.installed_date || c.registered_date) ? String(c.installed_date || c.registered_date).slice(0, 10) : "",
         address: c.address || "",
         fb: c.facebook || "",
         device: c.router_location || ""
@@ -145,7 +145,7 @@ async function syncStaffClients(silent) {
         overdue_due_date: r.overdue_due_date || "",
         termDate: r.termination_date ? String(r.termination_date).slice(0, 10) : "",
         termReason: r.termination_reason || r.status_reason || "",
-        installed: r.registered_date ? String(r.registered_date).slice(0, 10) : "",
+        installed: (r.installed_date || r.registered_date) ? String(r.installed_date || r.registered_date).slice(0, 10) : "",
         address: r.address || "",
         fb: r.facebook || "",
         device: r.router_location || ""
@@ -459,6 +459,7 @@ function editClient(no) {
   modal2("<div class='dlg-head'>Edit Client<button class='x' onclick='closeModal()'>&times;</button></div><div class='dlg-body'>" +
     "<label>Full name</label><input id='e-name' maxlength='100' value='" + esc(c.name) + "'>" +
     "<label>Address</label><input id='e-address' maxlength='255' value='" + esc(c.address || "") + "'>" +
+    "<label>Installed date</label><input id='e-installed' type='date' min='2020-01-01' max='" + manilaISO() + "' value='" + esc(c.installed || "") + "'>" +
     "<div class='two'><div><label>Mobile no.</label><input id='e-contact' maxlength='15' value='" + esc(c.contact || "") + "'></div>" +
     "<div><label>Client Email</label><input id='e-email' type='email' maxlength='100' value='" + esc(c.email || "") + "'></div></div>" +
     "<div class='two'><div><label>Internet Plan</label><select id='e-plan'>" + plans + "</select></div>" +
@@ -473,6 +474,7 @@ async function saveClientEdit(no) {
   var address = $("e-address").value.trim();
   var contactNo = $("e-contact").value.trim();
   var email = $("e-email").value.toLowerCase();
+  var installedDate = $("e-installed").value;
   var facebook = $("e-facebook").value.trim();
   var routerLocation = $("e-device").value.trim();
   var planId = Number($("e-plan").value);
@@ -481,6 +483,10 @@ async function saveClientEdit(no) {
 
   if (!name || !address || !contactNo || !email) {
     err.innerHTML = "Please complete the client name, address, contact number, and email.";
+    return;
+  }
+  if (!installedDate || installedDate < "2020-01-01" || installedDate > manilaISO()) {
+    err.innerHTML = "Installed date must be between January 1, 2020 and today (Asia/Manila).";
     return;
   }
   if (/\s/.test(email)) {
@@ -499,7 +505,7 @@ async function saveClientEdit(no) {
   try {
     await adminApi("/clients/" + encodeURIComponent(no), {
       method: "PATCH",
-      body: JSON.stringify({ name: name, address: address, contactNo: contactNo, email: email, planId: planId, facebook: facebook, routerLocation: routerLocation })
+      body: JSON.stringify({ name: name, address: address, contactNo: contactNo, email: email, planId: planId, facebook: facebook, routerLocation: routerLocation, installedDate: installedDate })
     });
   } catch (e) {
     err.innerHTML = esc(e.message || "Could not update client details.");
@@ -627,7 +633,7 @@ function openRegister() {
           "<button type='button' id='r-pass-btn' class='btn btn-light' style='padding:8px 10px;white-space:nowrap' onclick='toggleRegPw()'>Show</button>" +
         "</div>" +
       "</div>" +
-      "<div><label>Installation date</label><input type='date' id='r-date' value='" + today + "'></div>" +
+      "<div><label>Installation date</label><input type='date' id='r-date' min='2020-01-01' max='" + today + "' value='" + today + "'></div>" +
     "</div>" +
     "<div class='two'>" +
       "<div><label>Branch</label><select id='r-branch'>" + opts + "</select></div>" +
@@ -687,7 +693,8 @@ async function saveClient() {
       planId: planIdForName(planName),
       facebook: v("r-facebook"),
       routerLocation: device,
-      registeredDate: regDate
+      registeredDate: regDate,
+      installedDate: regDate
     });
 
     await syncStaffClients();

@@ -14,6 +14,7 @@ router.get('/me', wrap(async (req, res) => {
             COALESCE(latest.balance, 0) AS current_balance, latest.payment_status,
             c.status_reason, c.router_location, c.due_day,
             c.registered_date::text AS registered_date, c.grace_end_date::text AS grace_end_date,
+            c.installed_date::text AS installed_date,
             p.plan_name, p.monthly_rate, b.name AS branch,
             EXISTS (SELECT 1 FROM payments y WHERE y.account_no = c.account_no AND y.status = 'Pending') AS has_pending,
             (SELECT row_to_json(r) FROM (SELECT status, request_date::text AS request_date FROM cancellation_requests
@@ -37,7 +38,7 @@ router.get('/me', wrap(async (req, res) => {
   res.json(rows[0]);
 }));
 
-// the history endpoints read the 3-month VIEWS (older data is hidden from clients)
+// Statement and payment views retain the full account history.
 router.get('/statements', wrap(async (req, res) => {
   const { rows } = await query(
     `SELECT s.statement_id, s.invoice_no, s.billing_month::text, s.issued_date::text, s.due_date::text, s.amount,
@@ -55,6 +56,28 @@ router.get('/statements', wrap(async (req, res) => {
        ) v ON TRUE
       WHERE s.account_no=$1 ORDER BY s.billing_month DESC`, [req.user.accountNo]);
   res.json(rows);
+}));
+router.get('/statement-months', wrap(async (req, res) => {
+  const { rows } = await query(
+    `WITH bounds AS (
+       SELECT date_trunc('month', LEAST(
+                COALESCE(MIN(s.billing_month), MIN(c.installed_date)),
+                COALESCE(MIN(c.installed_date), MIN(s.billing_month))
+              ))::date AS first_month,
+              date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date)::date AS last_month
+         FROM clients c
+         LEFT JOIN statements s ON s.account_no=c.account_no
+        WHERE c.account_no=$1
+     )
+     SELECT TO_CHAR(generated.month_start, 'YYYY-MM') AS month
+       FROM bounds
+       CROSS JOIN LATERAL generate_series(
+         COALESCE(first_month, last_month), last_month, INTERVAL '1 month'
+       ) AS generated(month_start)
+      ORDER BY generated.month_start DESC`,
+    [req.user.accountNo]
+  );
+  res.json(rows.map(row => row.month));
 }));
 router.get('/payments', wrap(async (req, res) => {
   const { rows } = await query(

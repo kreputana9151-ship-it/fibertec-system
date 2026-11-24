@@ -5,13 +5,13 @@ const { generateStatementsForToday, sendPendingStatements, runStatusEngine } = r
 
 function startJobs() {
   setInterval(() => deliverPendingEmails().catch(e => console.error('[email queue]', e.message)), 30000);
-  // every day 00:05 Manila time: statements -> send -> status changes -> purge old history
+  // every day 00:05 Manila time: statements -> send -> status changes -> purge old notices
   cron.schedule('5 0 * * *', async () => {
     try {
       const created = await generateStatementsForToday();
       const sent = await sendPendingStatements();
       const st = await runStatusEngine();
-      await query('SELECT purge_old_records()');           // deletes anything older than 6 months
+      await query('SELECT purge_old_records()');           // billing history is retained; old notices are removed
       console.log('[daily]', { created, sent, st });
     } catch (e) { console.error('[daily job failed]', e); }
   }, { timezone: 'Asia/Manila' });

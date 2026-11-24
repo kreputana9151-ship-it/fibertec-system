@@ -6,6 +6,7 @@ const { applyVerifiedPayment, createInitialStatement } = require('../services/bi
 const { changeStatus, logActivity, addNotice } = require('../services/audit');
 const { deliverPendingEmails } = require('../services/notify');
 const { publicErrorMessage, publicErrorStatus } = require('../utils/publicError');
+const { installedDateError, manilaToday } = require('../utils/businessDate');
 
 router.use(requireAuth, requireRole('staff'));
 // every query below uses req.user.branchCode, so staff can never see another branch
@@ -31,6 +32,7 @@ router.get('/clients', async (req, res) => {
               c.facebook, c.router_location,
               p.plan_id, p.plan_name, p.monthly_rate, c.due_day,
               TO_CHAR(c.registered_date, 'YYYY-MM-DD') AS registered_date,
+              TO_CHAR(c.installed_date, 'YYYY-MM-DD') AS installed_date,
               TO_CHAR(c.termination_date, 'YYYY-MM-DD') AS termination_date,
               TO_CHAR(c.registered_date, 'YYYY-MM') AS created_month,
               TO_CHAR(c.termination_date, 'YYYY-MM') AS terminated_month,
@@ -129,11 +131,8 @@ router.post('/clients', async (req, res) => {
   const password = typeof b.password === 'string' ? b.password : '';
   const address = String(b.address || '').trim();
   const planId = b.planId || b.plan_id;
-  const todayParts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit'
-  }).formatToParts(new Date());
-  const part = type => todayParts.find(item => item.type === type).value;
-  const registeredDate = b.registeredDate || b.registered_date || `${part('year')}-${part('month')}-${part('day')}`;
+  const registeredDate = b.registeredDate || b.registered_date || manilaToday();
+  const installedDate = b.installedDate || b.installed_date || registeredDate;
 
   if (!name || !contactNo || !email || !address || !planId || !registeredDate) {
     return res.status(400).json({ error: 'Please complete all required client details (name, contact number, email, address, plan, and registration date).' });
@@ -155,6 +154,8 @@ router.post('/clients', async (req, res) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(registeredDate)) || isNaN(reg.getTime()) || reg.toISOString().slice(0, 10) !== registeredDate) {
     return res.status(400).json({ error: 'Invalid registration date.' });
   }
+  const installedDateIssue = installedDateError(installedDate);
+  if (installedDateIssue) return res.status(400).json({ error: installedDateIssue });
 
   const hash = await bcrypt.hash(password, 10);
 
@@ -179,8 +180,8 @@ router.post('/clients', async (req, res) => {
 
       await c.query(
         `INSERT INTO clients (account_no, user_id, branch_code, client_seq, plan_id, name, contact_no, email, address,
-                              facebook, router_location, registered_date, due_day, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13,'Active')`,
+                              facebook, router_location, registered_date, installed_date, due_day, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13::date,$14,'Active')`,
         [
           accountNo,
           u.rows[0].user_id,
@@ -194,7 +195,8 @@ router.post('/clients', async (req, res) => {
           b.facebook || null,
           b.routerLocation || b.router_location || null,
           registeredDate,
-          reg.getUTCDate()
+          installedDate,
+          Number(installedDate.slice(8, 10))
         ]
       );
 
@@ -207,7 +209,7 @@ router.post('/clients', async (req, res) => {
       await createInitialStatement(c, {
         accountNo,
         shortName: billing.short_name,
-        registeredDate
+        installedDate
       });
 
       const welcomeMsg = `Welcome to FiberTec IT Solutions, ${name}! Your Account No. is ${accountNo}. Use your registered email (${email}) or Account No. (${accountNo}) and your assigned password to sign in to the FiberTec Client Portal.`;

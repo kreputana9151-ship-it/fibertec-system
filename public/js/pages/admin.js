@@ -129,6 +129,7 @@ async function syncAdminData() {
       overdue_due_date: c.overdue_due_date || "",
       grace_end_date: c.grace_end_date || "",
       registered_date: c.registered_date || "",
+      installed_date: c.installed_date || c.registered_date || "",
       termination_date: c.termination_date || "",
       created_month: c.created_month || String(c.registered_date || c.created_at || c.installed_date || "").slice(0, 7),
       terminated_month: c.status === "Terminated" ? (c.terminated_month || String(c.termination_date || c.updated_at || "").slice(0, 7)) : "",

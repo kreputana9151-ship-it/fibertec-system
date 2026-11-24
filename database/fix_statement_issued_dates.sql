@@ -33,7 +33,6 @@ ALTER TABLE statements ALTER COLUMN issued_date SET NOT NULL;
 
 DROP VIEW IF EXISTS v_client_statements;
 CREATE VIEW v_client_statements AS
-  SELECT * FROM statements
-   WHERE billing_month >= (date_trunc('month', current_date) - INTERVAL '3 months')::date;
+  SELECT * FROM statements;
 
 COMMIT;

@@ -79,6 +79,7 @@ CREATE TABLE clients (
   facebook           VARCHAR(100),
   router_location    VARCHAR(150),
   registered_date    DATE     NOT NULL,
+  installed_date     DATE     NOT NULL DEFAULT ((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date),
   due_day            SMALLINT NOT NULL CHECK (due_day BETWEEN 1 AND 31),
   status             VARCHAR(15) NOT NULL DEFAULT 'Active'
                      CHECK (status IN ('Active','Grace Period','Under Review','Terminated')),
@@ -90,6 +91,7 @@ CREATE TABLE clients (
   current_balance    NUMERIC(10,2) NOT NULL DEFAULT 0,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (branch_code, client_seq),
+  CONSTRAINT clients_installed_date_floor CHECK (installed_date >= DATE '2020-01-01'),
   CONSTRAINT chk_account_format CHECK (
     account_no ~ '^[0-9]{8}$'
     AND substring(account_no, 1, 2) = branch_code
@@ -232,36 +234,29 @@ CREATE INDEX idx_notices_account   ON notices(account_no, notice_date);
 
 -- ---------------------------------------------------------------------
 -- 9. History retention
---    Client portal : shows only the last 3 months of receipts/statements/notices
---    Admin portal  : keeps and shows the last 6 months
---    Anything older than 6 months is deleted by purge_old_records()
+--    Billing statements and payments are retained for historical analytics.
+--    The client portal may retain a shorter notice feed, but statement/payment
+--    history is available from the account's installation date.
 -- ---------------------------------------------------------------------
 
 -- what the CLIENT is allowed to see (API: SELECT ... WHERE account_no = <logged-in client>)
 CREATE VIEW v_client_payments AS
-  SELECT * FROM payments
-  WHERE payment_date >= (date_trunc('month', current_date) - interval '3 months')::date;
+  SELECT * FROM payments;
 
 CREATE VIEW v_client_statements AS
-  SELECT * FROM statements
-  WHERE billing_month >= (date_trunc('month', current_date) - interval '3 months')::date;
+  SELECT * FROM statements;
 
 CREATE VIEW v_client_notices AS
   SELECT * FROM notices
   WHERE notice_date >= (date_trunc('month', current_date) - interval '3 months')::date;
 
--- real deletion (run daily, e.g. node-cron in the API, or pg_cron if available)
+-- Keep statements and payments so billing history and analytics remain complete.
+-- Notices may still be purged after six months.
 CREATE OR REPLACE FUNCTION purge_old_records() RETURNS void AS $$
 DECLARE
   cutoff DATE := (date_trunc('month', current_date) - interval '6 months')::date;
 BEGIN
   DELETE FROM notices  WHERE notice_date  < cutoff;
-  DELETE FROM payments WHERE payment_date < cutoff;
-  -- statements last, and only when no remaining payment/notice still points to them
-  DELETE FROM statements s
-   WHERE s.billing_month < cutoff
-     AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.statement_id = s.statement_id)
-     AND NOT EXISTS (SELECT 1 FROM notices  n WHERE n.statement_id = s.statement_id);
 END;
 $$ LANGUAGE plpgsql;
 

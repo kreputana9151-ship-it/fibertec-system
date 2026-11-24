@@ -1,5 +1,5 @@
 /* FiberTec - Client portal. Everything is read from / saved to the REAL database through /api/client/... */
-var ME = null, STM = [], PAYS = [], NOTES = [], NOTIFS = [], CPAGES = ["home", "payment", "statement", "notifications"], selId = null, BUSYP = false, SEL_N = null, PREV_UNREAD = null, CLIENT_RENDERED_SIGNATURE = "";
+var ME = null, STM = [], STMT_MONTHS = [], STMT_FILTER = "", PAYS = [], NOTES = [], NOTIFS = [], CPAGES = ["home", "payment", "statement", "notifications"], selId = null, BUSYP = false, SEL_N = null, PREV_UNREAD = null, CLIENT_RENDERED_SIGNATURE = "";
 function todayISO() { return manilaISO(); }
 function inBillingNow() { return ME.status == "Active" || ME.status == "Grace Period"; }
 function verifiedPaid(s) {
@@ -13,7 +13,7 @@ function cur() {
   s.paid = verifiedPaid(s); s.balance = Math.max(0, Number(s.amount || 0) - s.paid);
   return s;
 }
-function mapStmt(s) { return { id: s.statement_id, inv: s.invoice_no, bill: s.issued_date, due: s.due_date, amount: Number(s.amount), paid: Number(s.amount_paid), balance: Number(s.balance), pay: s.payment_status, partialLocked: Number(s.amount_paid) > 0 || String(s.stored_payment_status || s.payment_status || "").toLowerCase() == "partially paid" }; }
+function mapStmt(s) { return { id: s.statement_id, inv: s.invoice_no, month: String(s.billing_month || "").slice(0, 7), bill: s.issued_date, due: s.due_date, amount: Number(s.amount), paid: Number(s.amount_paid), balance: Number(s.balance), pay: s.payment_status, partialLocked: Number(s.amount_paid) > 0 || String(s.stored_payment_status || s.payment_status || "").toLowerCase() == "partially paid" }; }
 function cycleLabel(s) {
   if (!STM.length) return "No statement yet"; if (s.balance == 0) return "Paid"; if (ME.hasPending) return "Awaiting verification"; if (s.paid > 0) return "Partially paid";
   var d = dayDiff(s.due, todayISO()); return d == 0 ? "Due today" : d > 0 ? "Due in " + d + " day" + (d == 1 ? "" : "s") : "Overdue";
@@ -134,13 +134,18 @@ function downloadPdf(id, inv) {                                        // saves 
   }).catch(function (e) { if (e && e.status != 401) toast((e && e.message) || "Download failed. Please try again.", "error"); });
 }
 function renderStatements() {
-  if (!STM.length) { $("stmt-table").innerHTML = "<tbody><tr><td class='muted'>No statements available.</td></tr></tbody>"; $("estmt").innerHTML = ""; return; }
-  if (!STM.some(function (m) { return m.id == selId; })) selId = STM[0].id;
+  var visibleStatements = STMT_FILTER ? STM.filter(function (s) { return s.month === STMT_FILTER; }) : STM;
+  if (!visibleStatements.length) {
+    $("stmt-table").innerHTML = "<tbody><tr><td class='muted'>No statements available for this month.</td></tr></tbody>";
+    $("estmt").innerHTML = "";
+    return;
+  }
+  if (!visibleStatements.some(function (m) { return m.id == selId; })) selId = visibleStatements[0].id;
   var pn = ME.plan.replace(/\s*\d+\s*Mbps/, ""), mb = (ME.plan.match(/\d+(?=\s*Mbps)/) || [""])[0];
   var t = "<thead><tr><th>STATEMENT</th><th>DUE</th><th>TOTAL</th><th>STATUS</th></tr></thead><tbody>";
-  STM.forEach(function (s) { t += "<tr class='" + (s.id == selId ? "sel" : "") + "' onclick='selectStmt(" + s.id + ")'><td><b>" + esc(s.inv) + "</b><small>" + esc(pn) + " " + mb + "</small></td><td>" + fmtD(s.due) + "</td><td>" + peso(s.amount) + "</td><td>" + pill(stmtStatus(s)) + "</td></tr>"; });
+  visibleStatements.forEach(function (s) { t += "<tr class='" + (s.id == selId ? "sel" : "") + "' onclick='selectStmt(" + s.id + ")'><td><b>" + esc(s.inv) + "</b><small>" + esc(pn) + " " + mb + "</small></td><td>" + fmtD(s.due) + "</td><td>" + peso(s.amount) + "</td><td>" + pill(stmtStatus(s)) + "</td></tr>"; });
   $("stmt-table").innerHTML = t + "</tbody>";
-  var s = STM.filter(function (x) { return x.id == selId; })[0], lbl = stmtStatus(s), isCur = s.id == cur().id;
+  var s = visibleStatements.filter(function (x) { return x.id == selId; })[0], lbl = stmtStatus(s), isCur = s.id == cur().id;
   var recs = PAYS.filter(function (r) { return r.statement_id == s.id && r.status != "Rejected"; });
   var pays = recs.map(function (r) { return "<div class='est-ln'><span>" + r.method + " &middot; " + (r.reference_no ? "Ref " + fmtRef(r.reference_no) : "") + (r.reference_no && r.or_no ? " &middot; " : "") + (r.or_no ? "O.R. " + esc(r.or_no) : "") + "<small>" + fmtD(r.payment_date) + " &middot; " + (r.status == "Verified" ? "Verified" : "Awaiting verification") + "</small></span><span>" + peso(r.amount) + "</span></div>"; }).join("") || "<div class='est-ln'><span style='opacity:.5'>No payments yet</span><span></span></div>";
   $("estmt").innerHTML = "<div class='est-head'><div><h3>FiberTec IT Solutions</h3><small>E - STATEMENT</small></div><div class='r'><b>" + esc(s.inv) + "</b><small>Issued " + fmtD(s.bill) + "</small></div></div><div class='est-body'>" +
@@ -150,6 +155,20 @@ function renderStatements() {
     "<div class='est-h'><span>PAYMENTS RECEIVED</span><span>" + peso(s.paid) + "</span></div><hr class='l'>" + pays + "<hr>" +
     "<div class='est-ln est-tot'><span>Total amount due</span><span>" + peso(s.balance) + "</span></div>" +
     "<div class='est-acts'>" + (isCur && canPayNow() ? "<button class='c-btn' onclick='showPage(\"payment\")'>Pay now</button>" : "") + "<button class='c-btn' style='background:#fff;color:#013f70;border:1px solid #013f70' onclick='downloadPdf(" + s.id + ",\"" + esc(s.inv) + "\")'>Download PDF</button>" + (isCur ? cancelBtn() : "") + "</div></div>";
+}
+function filterStatementHistory() {
+  STMT_FILTER = $("statement-month").value;
+  renderStatements();
+}
+function populateStatementMonths() {
+  var select = $("statement-month");
+  if (!select) return;
+  var selected = STMT_FILTER;
+  select.innerHTML = "<option value=''>All available months</option>" + STMT_MONTHS.map(function (month) {
+    return "<option value='" + esc(month) + "'>" + esc(monthLabel(month)) + "</option>";
+  }).join("");
+  select.value = STMT_MONTHS.indexOf(selected) >= 0 ? selected : "";
+  STMT_FILTER = select.value;
 }
 
 /* ---------- Cancellation request ---------- */
@@ -211,16 +230,17 @@ function markAllRead() {
 
 /* ---------- load everything from the database ---------- */
 function loadAll() {
-  return Promise.all([apiCall("GET", "/api/client/me"), apiCall("GET", "/api/client/statements"), apiCall("GET", "/api/client/payments"), apiCall("GET", "/api/client/notices")]).then(function (r) {
-    var d = r[0]; ME = { no: d.account_no, name: d.name, email: d.email, address: d.address, branch: d.branch, plan: d.plan_name, rate: Number(d.monthly_rate), status: d.status, reason: d.status_reason, graceEnd: d.grace_end_date, installed: d.registered_date, device: d.router_location || "-", due: Number(d.due_day), hasPending: d.has_pending, cancel: d.cancel };
-    STM = r[1].map(mapStmt); PAYS = r[2]; NOTES = r[3];
+  return Promise.all([apiCall("GET", "/api/client/me"), apiCall("GET", "/api/client/statements"), apiCall("GET", "/api/client/payments"), apiCall("GET", "/api/client/notices"), apiCall("GET", "/api/client/statement-months")]).then(function (r) {
+    var d = r[0]; ME = { no: d.account_no, name: d.name, email: d.email, address: d.address, branch: d.branch, plan: d.plan_name, rate: Number(d.monthly_rate), status: d.status, reason: d.status_reason, graceEnd: d.grace_end_date, installed: d.installed_date || d.registered_date, device: d.router_location || "-", due: Number(d.due_day), hasPending: d.has_pending, cancel: d.cancel };
+    STM = r[1].map(mapStmt); PAYS = r[2]; NOTES = r[3]; STMT_MONTHS = r[4];
+    populateStatementMonths();
   });
 }
 function clientDataSignature() {
   return JSON.stringify([
     ME,
     STM.map(function (s) { return [s.id, s.inv, s.bill, s.due, s.amount, verifiedPaid(s), remainingBalance(s), s.pay]; }),
-    PAYS,
+    STMT_MONTHS, PAYS,
     NOTES
   ]);
 }

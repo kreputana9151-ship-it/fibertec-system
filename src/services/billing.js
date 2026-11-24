@@ -18,11 +18,16 @@ const manilaDate = value => {
   const part = type => parts.find(item => item.type === type).value;
   return `${part('year')}-${part('month')}-${part('day')}`;
 };
-const addMonthClamped = value => {
-  const [year, month, day] = dateOnly(value).split('-').map(Number);
-  const next = new Date(Date.UTC(year, month, 1));
-  const last = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
-  return new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth(), Math.min(day, last))).toISOString().slice(0, 10);
+const anniversaryDate = (installedDate, monthOffset) => {
+  const [year, month, day] = dateOnly(installedDate).split('-').map(Number);
+  const target = new Date(Date.UTC(year, month - 1 + monthOffset, 1));
+  const last = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), Math.min(day, last))).toISOString().slice(0, 10);
+};
+const monthDistance = (from, to) => {
+  const [fromYear, fromMonth] = dateOnly(from).slice(0, 7).split('-').map(Number);
+  const [toYear, toMonth] = dateOnly(to).slice(0, 7).split('-').map(Number);
+  return (toYear - fromYear) * 12 + toMonth - fromMonth;
 };
 const monthStart = value => `${dateOnly(value).slice(0, 7)}-01`;
 const addDays = (value, days) => {
@@ -64,11 +69,11 @@ async function insertStatement(c, { accountNo, shortName, issuedDate, dueDate })
   return result.rowCount > 0;
 }
 
-async function createInitialStatement(c, { accountNo, shortName, registeredDate }) {
-  const issuedDate = dateOnly(registeredDate);
+async function createInitialStatement(c, { accountNo, shortName, installedDate }) {
+  const issuedDate = dateOnly(installedDate);
   const todayDate = manilaDate(new Date());
   if (issuedDate > todayDate) return false;
-  const dueDate = addMonthClamped(issuedDate);
+  const dueDate = anniversaryDate(installedDate, 1);
   if (!isInBillingWindow(dueDate, todayDate)) return false;
   return insertStatement(c, { accountNo, shortName, issuedDate, dueDate });
 }
@@ -77,7 +82,7 @@ async function createInitialStatement(c, { accountNo, shortName, registeredDate 
 async function generateStatementsForToday(today = new Date()) {
   const todayDate = today instanceof Date ? manilaDate(today) : dateOnly(today);
   const { rows: clients } = await query(
-    `SELECT c.account_no, c.registered_date::text AS registered_date, b.short_name
+    `SELECT c.account_no, c.installed_date::text AS installed_date, b.short_name
        FROM clients c JOIN branches b USING (branch_code)
       WHERE c.status IN ('Active','Grace Period')`
   );
@@ -92,8 +97,9 @@ async function generateStatementsForToday(today = new Date()) {
           ORDER BY s.due_date DESC LIMIT 1`, [c.account_no]
       );
       const latest = latestRows[0] || null;
-      const issuedDate = latest ? dateOnly(latest.due_date) : dateOnly(c.registered_date);
-      const dueDate = addMonthClamped(issuedDate);
+      const issuedDate = latest ? dateOnly(latest.due_date) : dateOnly(c.installed_date);
+      const cycleOffset = latest ? monthDistance(c.installed_date, latest.due_date) + 1 : 1;
+      const dueDate = anniversaryDate(c.installed_date, cycleOffset);
       if (!isInBillingWindow(dueDate, todayDate)) return;
       if (await insertStatement(cx, {
         accountNo: c.account_no,
