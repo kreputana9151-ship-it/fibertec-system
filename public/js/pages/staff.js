@@ -120,7 +120,7 @@ function cashFigures() {
   var s = CASH[val("cash-client")]; if (!s) return null;
   var total = Number(s.amount || 0), previous = Number(s.amount_paid || 0), remaining = Math.max(0, total - previous);
   var partialOption = $("cash-type").options[1];
-  var partialAlreadyPaid = (previous > 0 || s.payment_status == "Partially paid" || s.stored_payment_status == "Partially paid") && remaining > 0;
+  var partialAlreadyPaid = (previous > 0 || String(s.payment_status || "").toLowerCase() == "partially paid" || String(s.stored_payment_status || "").toLowerCase() == "partially paid") && remaining > 0;
   partialOption.disabled = partialAlreadyPaid; partialOption.hidden = partialAlreadyPaid;
   if (partialAlreadyPaid && val("cash-type") == "Partial payment") $("cash-type").value = "Full payment";
   $("cash-type").options[0].textContent = partialAlreadyPaid ? "Full Payment (Remaining Balance)" : "Full payment";
