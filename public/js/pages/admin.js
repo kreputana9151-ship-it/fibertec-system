@@ -233,9 +233,9 @@ var ACTIVE_ADMIN_PAGE = "dash", DASH_REQUEST = 0, ANALYTICS_REQUEST = 0;
 function branchScope(id) {
   var b = val(id);
   if (b) return [b];
-  var names = [];
+  var names = Object.keys(BRANCH_MAP).sort().map(function (k) { return BRANCH_MAP[k]; });
   LIVE.clients.forEach(function (c) { if (c.branch && names.indexOf(c.branch) < 0) names.push(c.branch); });
-  return names.length ? names : Object.keys(BRANCH_MAP).map(function (k) { return BRANCH_MAP[k]; });
+  return names;
 }
 
 /* ---------- Dashboard ---------- */
