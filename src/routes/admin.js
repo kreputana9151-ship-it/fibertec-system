@@ -297,6 +297,7 @@ router.post('/notices/:id/resend', async (req, res) => {
 
 // PATCH /api/admin/clients/:accountNo
 router.patch('/clients/:accountNo', async (req, res) => {
+  if (/\s/.test(req.params.accountNo)) return res.status(400).json({ error: 'Account number must not contain whitespace.' });
   const b = req.body || {};
   const name = String(b.name || '').trim();
   const contactNo = String(b.contactNo || '').trim();
@@ -351,6 +352,7 @@ router.patch('/clients/:accountNo', async (req, res) => {
 
 // PATCH /api/admin/clients/:accountNo/status  { status: 'Active'|'Terminated', reason }
 router.patch('/clients/:accountNo/status', async (req, res) => {
+  if (/\s/.test(req.params.accountNo)) return res.status(400).json({ error: 'Account number must not contain whitespace.' });
   const { status, reason } = req.body || {};
   if (!['Active', 'Terminated'].includes(status)) return res.status(400).json({ error: 'Use Active or Terminated' });
   try {
@@ -365,6 +367,7 @@ router.patch('/clients/:accountNo/status', async (req, res) => {
 
 // GET /api/admin/clients/:accountNo/status-log
 router.get('/clients/:accountNo/status-log', async (req, res) => {
+  if (/\s/.test(req.params.accountNo)) return res.status(400).json({ error: 'Account number must not contain whitespace.' });
   const { rows } = await query('SELECT * FROM account_status_log WHERE account_no=$1 ORDER BY changed_at DESC', [req.params.accountNo]);
   res.json(rows);
 });

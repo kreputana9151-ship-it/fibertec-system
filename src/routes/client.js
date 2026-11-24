@@ -68,8 +68,12 @@ router.get('/statements/:id/pdf', wrap(async (req, res) => {
 // POST /api/client/payments  { statementId, amount, referenceNo }   (GCash reference, goes to Pending = joins the staff FIFO queue)
 // Rules: partial only on/before due date; after the due date the FULL balance is required.
 router.post('/payments', wrap(async (req, res) => {
-  const { statementId, amount, referenceNo } = req.body || {};
-  if (!/^[0-9]{13}$/.test(referenceNo || '')) return res.status(400).json({ error: 'GCash reference must be 13 digits' });
+  const body = req.body || {};
+  const { statementId, amount } = body;
+  const referenceNo = body.referenceNo || body.reference_no || body.ref_no;
+  if (typeof referenceNo !== 'string') return res.status(400).json({ error: 'GCash reference must be a 13-digit string.' });
+  if (/\s/.test(referenceNo)) return res.status(400).json({ error: 'GCash reference must not contain whitespace.' });
+  if (!/^[0-9]{13}$/.test(referenceNo)) return res.status(400).json({ error: 'GCash reference must be 13 digits' });
 
   const s = (await query('SELECT * FROM statements WHERE statement_id=$1 AND account_no=$2', [statementId, req.user.accountNo])).rows[0];
   if (!s) return res.status(404).json({ error: 'Statement not found' });

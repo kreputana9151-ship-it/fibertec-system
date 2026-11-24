@@ -60,8 +60,9 @@ function payAmount() { var s = cur(); return val("paytype") == "partial" ? Math.
 function updatePay() { var t = val("paytype"); $("steps23").classList.toggle("hidden", t == ""); $("partialnote").classList.toggle("hidden", t != "partial"); $("payamt").innerHTML = peso(payAmount()); }
 function cancelPay() { $("ref").value = ""; $("referr").innerHTML = ""; $("paytype").value = ""; updatePay(); }
 function submitPayment() {                                             // goes to the staff Payments Verification Queue
-  var ref = val("ref").replace(/\s/g, ""), t = val("paytype"), s = cur();
+  var ref = val("ref"), t = val("paytype"), s = cur();
   if (!t) return;
+  if (/\s/.test(ref)) { $("referr").innerHTML = "Reference number must not contain whitespace."; return; }
   if (!/^[0-9]{13}$/.test(ref)) { $("referr").innerHTML = "Reference number must be exactly 13 digits."; return; }
   if (BUSYP) return; BUSYP = true; $("referr").innerHTML = "";
   apiCall("POST", "/api/client/payments", { statementId: s.id, amount: payAmount(), referenceNo: ref })
