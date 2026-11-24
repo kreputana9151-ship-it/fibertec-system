@@ -20,27 +20,10 @@ const periodAnalyticsSql = `
     SELECT branch_code, name FROM branches
      WHERE ($2::text IS NULL OR branch_code=$2)
   ),
-  status_snapshot AS (
-    SELECT c.account_no, c.branch_code,
-           CASE
-             WHEN $1::text IS NULL OR $1=TO_CHAR(current_date, 'YYYY-MM') THEN c.status
-             ELSE COALESCE((
-               SELECT h.new_status
-                 FROM account_status_log h
-                WHERE h.account_no=c.account_no
-                  AND TO_CHAR(h.changed_at, 'YYYY-MM') <= $1
-                ORDER BY h.changed_at DESC, h.log_id DESC
-                LIMIT 1
-             ), 'Active')
-           END AS status
-      FROM clients c
-     WHERE $1::text IS NULL
-        OR c.registered_date < (TO_DATE($1, 'YYYY-MM') + INTERVAL '1 month')::date
-  ),
   client_totals AS (
     SELECT c.branch_code, COUNT(*)::int AS client_count,
            COUNT(*) FILTER (WHERE c.status='Active')::int AS active_count
-      FROM status_snapshot c JOIN branch_scope b USING (branch_code)
+      FROM clients c JOIN branch_scope b USING (branch_code)
      GROUP BY c.branch_code
   ),
   statement_totals AS (
@@ -59,6 +42,15 @@ const periodAnalyticsSql = `
       ) paid ON TRUE
      GROUP BY c.branch_code
   ),
+  payment_totals AS (
+    SELECT b.branch_code,
+           COALESCE(SUM(p.amount) FILTER (WHERE p.status='Verified'),0) AS revenue
+      FROM branch_scope b
+      LEFT JOIN clients c USING (branch_code)
+      LEFT JOIN payments p ON p.account_no=c.account_no
+        AND ($1::text IS NULL OR TO_CHAR(COALESCE(p.payment_date, p.created_at::date), 'YYYY-MM')=$1)
+     GROUP BY b.branch_code
+  ),
   registration_totals AS (
     SELECT c.branch_code, COUNT(*)::int AS registrations
       FROM clients c JOIN branch_scope b USING (branch_code)
@@ -67,11 +59,10 @@ const periodAnalyticsSql = `
   ),
   cancellation_totals AS (
     SELECT c.branch_code, COUNT(*)::int AS cancellations
-      FROM cancellation_requests r
-      JOIN clients c USING (account_no)
+      FROM clients c
       JOIN branch_scope b USING (branch_code)
-     WHERE r.status='Approved'
-       AND ($1::text IS NULL OR TO_CHAR(COALESCE(r.decided_at::date, r.request_date), 'YYYY-MM')=$1)
+     WHERE c.status='Terminated'
+       AND ($1::text IS NULL OR TO_CHAR(c.termination_date, 'YYYY-MM')=$1)
      GROUP BY c.branch_code
   ),
   branch_data AS (
@@ -80,6 +71,7 @@ const periodAnalyticsSql = `
            COALESCE(ct.active_count,0) AS active,
            COALESCE(st.billed,0) AS billed,
            COALESCE(st.collected,0) AS collected,
+           COALESCE(pt.revenue,0) AS revenue,
            CASE WHEN COALESCE(st.billed,0)=0 THEN 0
                 ELSE ROUND(COALESCE(st.collected,0)/st.billed*100,1) END AS collection_efficiency,
            COALESCE(st.statement_count,0) AS statements,
@@ -89,18 +81,20 @@ const periodAnalyticsSql = `
       FROM branch_scope b
       LEFT JOIN client_totals ct USING (branch_code)
       LEFT JOIN statement_totals st USING (branch_code)
+      LEFT JOIN payment_totals pt USING (branch_code)
       LEFT JOIN registration_totals rt USING (branch_code)
       LEFT JOIN cancellation_totals xt USING (branch_code)
   ),
   status_data AS (
     SELECT c.status, COUNT(*)::int AS count
-      FROM status_snapshot c JOIN branch_scope b USING (branch_code)
+      FROM clients c JOIN branch_scope b USING (branch_code)
      GROUP BY c.status
   )
   SELECT
     COALESCE((SELECT json_agg(json_build_object(
       'branch_code', branch_code, 'branch', branch, 'clients', clients, 'active', active,
-      'billed', billed, 'collected', collected, 'collection_efficiency', collection_efficiency,
+      'billed', billed, 'collected', collected, 'revenue', revenue,
+      'collection_efficiency', collection_efficiency,
       'statements', statements, 'delivered', delivered, 'registrations', registrations,
       'cancellations', cancellations
     ) ORDER BY branch_code) FROM branch_data), '[]'::json) AS branches,

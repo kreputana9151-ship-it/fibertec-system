@@ -110,7 +110,7 @@ function getAllActiveClients() {
   return typeof clients !== "undefined" ? clients : [];
 }
 
-async function syncStaffClients() {
+async function syncStaffClients(silent) {
   if (isAdmin()) return;
   try {
     var rows = await apiCall("GET", "/api/staff/clients");
@@ -152,7 +152,7 @@ async function syncStaffClients() {
     });
     LIVE_STAFF_LOADED = true;
   } catch (e) {
-    if (e && e.status != 401) {
+    if (e && e.status != 401 && !silent) {
       toast((e && e.message) || "Could not refresh branch clients.", "error");
     }
   }

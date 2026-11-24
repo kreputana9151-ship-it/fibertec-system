@@ -1,6 +1,12 @@
 /* Payments Verification Queue - Single-Server FIFO (M/M/1), LIVE from the backend.
    Queue #1 = oldest 'Pending' payment (ORDER BY created_at ASC). Only Queue #1 can be verified or rejected. */
-var PAY = { loaded: false, error: "", queue: [], metrics: null, records: [], activity: [], at: 0 }, BUSY = false;
+var PAY = {
+  loaded: false, error: "", queue: [], metrics: null, records: [], activity: [], at: 0,
+  statusCounts: { active: 0, grace_period: 0, under_review: 0, terminated: 0 }
+}, BUSY = false, STAFF_RENDERED_SIGNATURE = "";
+function staffDataSignature() {
+  return JSON.stringify([PAY.queue, PAY.metrics, PAY.records, PAY.activity, PAY.statusCounts, STAFF_REQUESTS, LIVE_STAFF_CLIENTS, PAY.error]);
+}
 
 function fmtTs(v) {
   var d = parseISO(v);
@@ -61,18 +67,26 @@ function refreshPayments() {
     apiCall("GET", "/api/staff/payments/queue").then(function (d) { PAY.queue = d.queue; PAY.metrics = d.metrics; }),
     apiCall("GET", "/api/staff/payments").then(function (d) { PAY.records = d.filter(function (r) { return r.status != "Pending"; }); }),
     apiCall("GET", "/api/staff/activity").then(function (d) { PAY.activity = d; }),
+    apiCall("GET", "/api/staff/dashboard").then(function (d) { PAY.statusCounts = d; }),
     apiCall("GET", "/api/staff/cancellations").then(function (rows) {
       STAFF_REQUESTS = rows.filter(function (r) { return r.status === "Pending"; }).map(function (r) {
         return { id: r.request_id, acc: r.account_no, name: r.name, date: r.request_date, reason: r.reason, status: r.status };
       });
     }),
-    syncStaffClients()
+    syncStaffClients(true)
   ]).then(function () { PAY.loaded = true; PAY.error = ""; PAY.at = Date.now(); })
     .catch(function (e) { if (e && e.status == 401) return; PAY.error = (e && e.message) || "Cannot reach the server."; })
-    .then(function () { renderStaff(); });
+    .then(function () {
+      if (!liveRefreshPaused() && STAFF_RENDERED_SIGNATURE !== staffDataSignature()) {
+        var signature = staffDataSignature();
+        return renderPreservingScroll(renderStaffLivePage).then(function () {
+          STAFF_RENDERED_SIGNATURE = signature;
+        });
+      }
+    });
 }
 function startPolling() {                                              // new client submissions show up by themselves
   refreshPayments();
-  setInterval(function () { if (!document.hidden && !BUSY) refreshPayments(); }, 8000);
+  setInterval(function () { if (!liveRefreshPaused() && !BUSY) refreshPayments(); }, 8000);
   setInterval(tickQueue, 1000);
 }

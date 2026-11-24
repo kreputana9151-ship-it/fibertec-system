@@ -93,6 +93,25 @@ function modal2(html, cls) {
   m.addEventListener("mousedown", function (e) { if (e.target == m) closeModal(); });
   document.body.appendChild(m); return m;
 }
+function liveRefreshPaused() {
+  if (document.hidden || document.querySelector(".modal, .modal-overlay:not(.hidden)")) return true;
+  var active = document.activeElement;
+  return !!(active && (active.matches("input, textarea, select") || active.isContentEditable));
+}
+function renderPreservingScroll(render) {
+  var x = window.scrollX, y = window.scrollY, positions = [];
+  document.querySelectorAll("[id]").forEach(function (el) {
+    if (el.scrollTop || el.scrollLeft) positions.push({ id: el.id, top: el.scrollTop, left: el.scrollLeft });
+  });
+  return Promise.resolve(render()).then(function (result) {
+    window.scrollTo(x, y);
+    positions.forEach(function (position) {
+      var el = $(position.id);
+      if (el) { el.scrollTop = position.top; el.scrollLeft = position.left; }
+    });
+    return result;
+  });
+}
 document.addEventListener("keydown", function (e) { if (e.key == "Escape") closeModal(); });
 function confirmBox(title, text, yesLabel, onYes, danger) {
   window._yes = onYes || function () { };

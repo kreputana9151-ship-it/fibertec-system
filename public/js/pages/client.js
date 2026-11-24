@@ -1,5 +1,5 @@
 /* FiberTec - Client portal. Everything is read from / saved to the REAL database through /api/client/... */
-var ME = null, STM = [], PAYS = [], NOTES = [], NOTIFS = [], CPAGES = ["home", "payment", "statement", "notifications"], selId = null, BUSYP = false, SEL_N = null, PREV_UNREAD = null;
+var ME = null, STM = [], PAYS = [], NOTES = [], NOTIFS = [], CPAGES = ["home", "payment", "statement", "notifications"], selId = null, BUSYP = false, SEL_N = null, PREV_UNREAD = null, CLIENT_RENDERED_SIGNATURE = "";
 function todayISO() { return iso(new Date()); }
 function inBillingNow() { return ME.status == "Active" || ME.status == "Grace Period"; }
 function verifiedPaid(s) {
@@ -72,6 +72,7 @@ function renderClient() {
       ? "Your payment is waiting for staff verification."
       : "";
   renderStatements(); renderNotifications(); updatePay();
+  CLIENT_RENDERED_SIGNATURE = clientDataSignature();
 }
 function updatePaymentOptions(s) {
   var select = $("paytype"), full = select.querySelector("option[value='full']"), partial = select.querySelector("option[value='partial']");
@@ -211,7 +212,22 @@ function loadAll() {
     STM = r[1].map(mapStmt); PAYS = r[2]; NOTES = r[3];
   });
 }
+function clientDataSignature() {
+  return JSON.stringify([
+    ME,
+    STM.map(function (s) { return [s.id, s.inv, s.bill, s.due, s.amount, verifiedPaid(s), remainingBalance(s), s.pay]; }),
+    PAYS,
+    NOTES
+  ]);
+}
+function pollClientData() {
+  if (BUSYP || liveRefreshPaused()) return;
+  loadAll().then(function () {
+    if (liveRefreshPaused()) return;
+    if (clientDataSignature() !== CLIENT_RENDERED_SIGNATURE) renderPreservingScroll(renderClient);
+  }).catch(function () {});
+}
 if ($("c-cards") && requireRole("client")) {
-  loadAll().then(function () { showPage("home"); setInterval(function () { if (!document.hidden && !BUSYP) loadAll().then(renderClient).catch(function () {}); }, 15000); })
+  loadAll().then(function () { showPage("home"); setInterval(pollClientData, 15000); })
     .catch(function (e) { if (e && e.status != 401) toast((e && e.message) || "Cannot reach the server.", "error"); });
 }

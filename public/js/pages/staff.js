@@ -1,17 +1,23 @@
 /* FiberTec - Staff portal (branch-scoped). Staff can verify payments and approve/reject cancellation requests,
    but cannot terminate or reactivate accounts (admin only). */
 var STAFF_PAGES = ["dash", "clients", "pay"];
-var STAFF_REQUESTS = [];
-function showStaff(id) { showSection(STAFF_PAGES, id, "nav-"); hideTip(); ({ dash: renderStaff, clients: renderClients, pay: renderStaff })[id](); }
+var STAFF_REQUESTS = [], ACTIVE_STAFF_PAGE = "dash";
+function showStaff(id) { ACTIVE_STAFF_PAGE = id; showSection(STAFF_PAGES, id, "nav-"); hideTip(); ({ dash: renderStaff, clients: renderClients, pay: renderStaff })[id](); }
 function myClients() { return getAllActiveClients().filter(function (c) { return c.branch == STAFF_BRANCH; }); }
 function myRequests(status) { return STAFF_REQUESTS.filter(function (r) { return r.status == status; }); }
 function onClientsChanged() { renderStaff(); }
 
 function renderStaff() {
-  var mine = myClients(), cnt = statusCounts(mine), pend = PAY.queue, mc = 0;
+  var mine = myClients(), cnt = {
+    Active: Number(PAY.statusCounts.active || 0),
+    "Grace Period": Number(PAY.statusCounts.grace_period || 0),
+    "Under Review": Number(PAY.statusCounts.under_review || 0),
+    Terminated: Number(PAY.statusCounts.terminated || 0)
+  }, pend = PAY.queue;
   var due = mine.filter(function (c) { return inBilling(c) && c.dueISO == APP_TODAY && c.balance > 0; }).length;
-  $("t-verify").innerHTML = pend.length; $("t-due").innerHTML = due; $("t-grace").innerHTML = cnt["Grace Period"]; $("t-review").innerHTML = cnt["Under Review"];
-  $("t-collected").innerHTML = peso(collectedThisMonth());
+  $("t-verify").textContent = pend.length; $("t-due").textContent = due; $("t-active").textContent = cnt.Active;
+  $("t-grace").textContent = cnt["Grace Period"]; $("t-review").textContent = cnt["Under Review"]; $("t-terminated").textContent = cnt.Terminated;
+  $("t-collected").innerHTML = peso(Number(PAY.statusCounts.collected_this_month || 0));
   /* payments to verify */
   $("dash-queue").innerHTML = !PAY.loaded ? "<p class='empty'>" + esc(PAY.error || "Loading the queue...") + "</p>" : pend.length ? headCard(pend[0]) + (pend.length > 1 ? "<p class='muted' style='margin:8px 6px 0'>+ " + (pend.length - 1) + " waiting in queue (locked until Queue #1 is done). <a style='color:#2b86ff;cursor:pointer' onclick='showStaff(\"pay\")'>Open the queue</a></p>" : "") : "<p class='empty'>No pending payments in the verification queue.</p>";
   /* clients needing attention first */
@@ -29,6 +35,11 @@ function renderStaff() {
   $("activity").innerHTML = activity.slice(0, 9).map(function (a) { return "<div class='row-line'><span>" + esc(a.t) + "<small>" + a.when + "</small></span></div>"; }).join("") || "<p class='empty'>No activity yet...</p>";
   renderStaffPay();
 }
+function renderStaffLivePage() {
+  if (ACTIVE_STAFF_PAGE === "clients") renderClients();
+  else if (ACTIVE_STAFF_PAGE === "pay") renderStaffPay();
+  else renderStaff();
+}
 function askRequest(id, ok) {
   var r = STAFF_REQUESTS.filter(function (x) { return String(x.id) == String(id); })[0];
   if (!r) return;
@@ -45,11 +56,6 @@ function askRequest(id, ok) {
 }
 
 /* ---------- Payments tab (live API) ---------- */
-function collectedThisMonth() {
-  var n = new Date();
-  return PAY.records.filter(function (r) { var d = r.verified_at && new Date(r.verified_at); return r.status == "Verified" && d && d.getFullYear() == n.getFullYear() && d.getMonth() == n.getMonth(); })
-    .reduce(function (a, r) { return a + Number(r.amount); }, 0);
-}
 function queueItem(id) { return PAY.queue.filter(function (p) { return String(p.payment_id) == String(id); })[0]; }
 function notHead(id) {
   var h = PAY.queue[0]; if (h && String(h.payment_id) == String(id)) return false;

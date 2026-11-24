@@ -235,10 +235,17 @@ async function showAdmin(id) {
     toast("Database sync warning: " + e.message);
   }
   await ({ dash: renderDash, clients: renderClients, billing: renderBilling, pay: renderPayments, analytics: renderAnalytics, email: renderNotices })[id]();
+  ADMIN_RENDERED_SIGNATURE = adminDataSignature();
 }
-function pct(a, b) { return b ? Math.round(a / b * 1000) / 10 : 0; }
+function pct(a, b) {
+  a = Number(a); b = Number(b);
+  return isFinite(a) && isFinite(b) && b > 0 ? Math.round(a / b * 1000) / 10 : 0;
+}
 var ACTIVE_ADMIN_PAGE = "dash", DASH_REQUEST = 0, ANALYTICS_REQUEST = 0;
-var ADMIN_CANCEL_REQUEST = 0, ADMIN_CANCEL_POLL = null;
+var ADMIN_CANCEL_REQUEST = 0, ADMIN_CANCEL_POLL = null, ADMIN_CANCEL_SIGNATURE = "", ADMIN_POLL_RUNNING = false, ADMIN_RENDERED_SIGNATURE = "";
+function adminDataSignature() {
+  return JSON.stringify([LIVE.clients, LIVE.statements, LIVE.payments, LIVE.notices, LIVE.months]);
+}
 function branchScope(id) {
   var b = val(id);
   if (b) return [b];
@@ -248,21 +255,23 @@ function branchScope(id) {
 }
 
 /* ---------- Dashboard ---------- */
-async function renderDash() {
+async function renderDash(isLivePoll) {
   var request = ++DASH_REQUEST, b = val("d-branch"), m = val("d-month");
-  ["d-stats", "branch-bars", "status-legend", "recent-pay"].forEach(function (id) { $(id).innerHTML = ""; });
-  $("dash-chart").innerHTML = "";
-  $("donut-n").innerHTML = "";
-  setDonut("status-donut", [0, 0, 0, 0], STATUS_COLORS);
-  refreshAdminCancellations();
+  if (!isLivePoll) {
+    ["d-stats", "branch-bars", "status-legend", "recent-pay"].forEach(function (id) { $(id).innerHTML = ""; });
+    $("dash-chart").innerHTML = "";
+    $("donut-n").innerHTML = "";
+    setDonut("status-donut", [0, 0, 0, 0], STATUS_COLORS);
+  }
+  refreshAdminCancellations(!isLivePoll);
   if (!ADMIN_CANCEL_POLL) {
     ADMIN_CANCEL_POLL = setInterval(function () {
-      if (!document.hidden && ACTIVE_ADMIN_PAGE === "dash") refreshAdminCancellations();
+      if (!liveRefreshPaused() && ACTIVE_ADMIN_PAGE === "dash") refreshAdminCancellations();
     }, 3000);
   }
   try {
     var data = await adminApi("/dashboard" + periodQuery(m, b));
-    if (request !== DASH_REQUEST) return;
+    if (request !== DASH_REQUEST || (isLivePoll && liveRefreshPaused())) return false;
     var branches = data.branches || [], names = branches.map(function (x) { return x.branch; });
     var cnt = { Active: 0, "Grace Period": 0, "Under Review": 0, Terminated: 0 };
     (data.statuses || []).forEach(function (x) { if (cnt[x.status] !== undefined) cnt[x.status] = Number(x.count); });
@@ -307,12 +316,18 @@ async function renderDash() {
       h += "<tr><td>" + fmtD(r.payment_date) + "</td><td>" + esc(r.name) + "</td><td>" + peso(r.amount) + "</td><td>" + badgeFor(r.status) + "</td></tr>";
     });
     $("recent-pay").innerHTML = h + (rp.length ? "" : "<tr><td colspan='4' class='muted'>No payments for this selection.</td></tr>") + "</tbody>";
+    return true;
   } catch (e) {
-    if (request === DASH_REQUEST) toast("Dashboard data could not be loaded: " + e.message, "error");
+    if (request === DASH_REQUEST) {
+      if (isLivePoll) console.error("[admin dashboard refresh]", e);
+      else toast("Dashboard data could not be loaded: " + e.message, "error");
+    }
+    return false;
   }
 }
 
-async function refreshAdminCancellations() {
+async function refreshAdminCancellations(force) {
+  if (!force && liveRefreshPaused()) return;
   var el = $("dash-cancellations");
   if (!el) return;
   var request = ++ADMIN_CANCEL_REQUEST, branch = val("d-branch");
@@ -320,8 +335,11 @@ async function refreshAdminCancellations() {
   var path = "/cancellations" + (branchCode ? "?branch=" + encodeURIComponent(branchCode) : "");
   try {
     var rows = await adminApi(path);
-    if (request !== ADMIN_CANCEL_REQUEST) return;
+    if (request !== ADMIN_CANCEL_REQUEST || (!force && liveRefreshPaused())) return;
     var pending = rows.filter(function (r) { return r.status === "Pending"; });
+    var signature = JSON.stringify(pending);
+    if (signature === ADMIN_CANCEL_SIGNATURE) return;
+    ADMIN_CANCEL_SIGNATURE = signature;
     $("admin-req-count").textContent = pending.length;
     el.innerHTML = pending.length
       ? pending.map(function (r) {
@@ -331,10 +349,7 @@ async function refreshAdminCancellations() {
       }).join("")
       : "<p class='empty'>No pending cancellation requests.</p>";
   } catch (e) {
-    if (request === ADMIN_CANCEL_REQUEST) {
-      $("admin-req-count").textContent = "0";
-      el.innerHTML = "<p class='empty'>Could not load cancellation requests: " + esc(e.message || "Request failed.") + "</p>";
-    }
+    if (request === ADMIN_CANCEL_REQUEST) console.error("[admin cancellation refresh]", e);
   }
 }
 function pesoPlainK(v) { return v >= 1000 ? "\u20B1" + (v / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 }) + "K" : "\u20B1" + v; }
@@ -713,23 +728,26 @@ function renderMarkovCard(m, branchFilter) {
 }
 
 /* ---------- Branch analytics ---------- */
-async function renderAnalytics() {
+async function renderAnalytics(isLivePoll) {
   var request = ++ANALYTICS_REQUEST, b = val("a-branch"), m = val("a-month"), cl = liveClients(b);
-  ["an-stats", "plan-legend", "anova", "markov"].forEach(function (id) { $(id).innerHTML = ""; });
-  ["an-chart", "reg-chart", "churn-chart"].forEach(function (id) { $(id).innerHTML = ""; });
-  $("plan-n").innerHTML = "";
-  setDonut("plan-donut", [0, 0, 0, 0], ["#1b7a8a", "#0d4f7a", "#f5a623", "#8fb8d0"]);
+  if (!isLivePoll) {
+    ["an-stats", "plan-legend", "anova", "markov"].forEach(function (id) { $(id).innerHTML = ""; });
+    ["an-chart", "reg-chart", "churn-chart"].forEach(function (id) { $(id).innerHTML = ""; });
+    $("plan-n").innerHTML = "";
+    setDonut("plan-donut", [0, 0, 0, 0], ["#1b7a8a", "#0d4f7a", "#f5a623", "#8fb8d0"]);
+  }
   try {
     var data = await adminApi("/analytics" + periodQuery(m, b));
-    if (request !== ANALYTICS_REQUEST) return;
+    if (request !== ANALYTICS_REQUEST || (isLivePoll && liveRefreshPaused())) return false;
     var branches = data.branches || [], names = branches.map(function (x) { return x.branch; });
     var billed = branches.reduce(function (a, x) { return a + Number(x.billed); }, 0);
     var coll = branches.reduce(function (a, x) { return a + Number(x.collected); }, 0);
+    var revenue = branches.reduce(function (a, x) { return a + Number(x.revenue); }, 0);
     var delivered = branches.reduce(function (a, x) { return a + Number(x.delivered); }, 0);
     var statementCount = branches.reduce(function (a, x) { return a + Number(x.statements); }, 0);
 
     $("an-stats").innerHTML =
-      '<div class="stat" style="background:#013f70"><b>Total Revenue (verified payments)</b><span>' + peso(coll) + '</span></div>' +
+      '<div class="stat" style="background:#013f70"><b>Total Revenue (verified payments)</b><span>' + peso(revenue) + '</span></div>' +
       '<div class="stat" style="background:#5197d7"><b>Collection Rate</b><span>' + pct(coll, billed) + '%</span><small>' + peso(coll) + ' of ' + peso(billed) + '</small></div>' +
       '<div class="stat" style="background:#2daea6"><b>Billing Completion Rate</b><span>' + pct(delivered, statementCount) + '%</span><small>' + delivered + ' of ' + statementCount + ' statements delivered</small></div>';
 
@@ -778,8 +796,13 @@ async function renderAnalytics() {
 
     renderAnovaCard(m, b);
     renderMarkovCard(m, b);
+    return true;
   } catch (e) {
-    if (request === ANALYTICS_REQUEST) toast("Analytics data could not be loaded: " + e.message, "error");
+    if (request === ANALYTICS_REQUEST) {
+      if (isLivePoll) console.error("[admin analytics refresh]", e);
+      else toast("Analytics data could not be loaded: " + e.message, "error");
+    }
+    return false;
   }
 }
 
@@ -893,19 +916,32 @@ async function startAdmin() {
   fillSelect("n-status", "All Status", ["Sent", "Not Yet Sent", "Failed"]);
   if (typeof initClientsView === "function") initClientsView();
   renderDash();
-  setInterval(function () {
-    if (document.hidden) return;
-    syncAdminData().then(function () {
+  ADMIN_RENDERED_SIGNATURE = adminDataSignature();
+  setInterval(async function () {
+    if (ADMIN_POLL_RUNNING || liveRefreshPaused()) return;
+    ADMIN_POLL_RUNNING = true;
+    try {
+      await syncAdminData();
+      if (liveRefreshPaused()) return;
+      var signature = adminDataSignature();
+      if (signature === ADMIN_RENDERED_SIGNATURE) return;
       populateMonthFilters(false);
-      if (ACTIVE_ADMIN_PAGE === "dash") return renderDash();
-      if (ACTIVE_ADMIN_PAGE === "billing") return renderBilling();
-      if (ACTIVE_ADMIN_PAGE === "pay") return renderPayments();
-      if (ACTIVE_ADMIN_PAGE === "analytics") return renderAnalytics();
-      if (ACTIVE_ADMIN_PAGE === "email") return renderNotices();
-      if (ACTIVE_ADMIN_PAGE === "clients") return renderClients();
-    }).catch(function (e) {
-      toast("Live data refresh failed: " + e.message, "error");
-    });
+      var render = {
+        dash: function () { return renderDash(true); },
+        billing: renderBilling,
+        pay: renderPayments,
+        analytics: function () { return renderAnalytics(true); },
+        email: renderNotices,
+        clients: renderClients
+      }[ACTIVE_ADMIN_PAGE];
+      var applied = render ? await renderPreservingScroll(render) : true;
+      if (applied === false || liveRefreshPaused()) return;
+      ADMIN_RENDERED_SIGNATURE = signature;
+    } catch (e) {
+      console.error("[admin live refresh]", e);
+    } finally {
+      ADMIN_POLL_RUNNING = false;
+    }
   }, 15000);
 }
 

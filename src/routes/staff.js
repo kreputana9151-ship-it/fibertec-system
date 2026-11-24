@@ -80,6 +80,33 @@ router.get('/clients', async (req, res) => {
   }
 });
 
+// GET /api/staff/dashboard -> exact status counts for this branch
+router.get('/dashboard', async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT COUNT(*) FILTER (WHERE status='Active')::int AS active,
+              COUNT(*) FILTER (WHERE status='Grace Period')::int AS grace_period,
+              COUNT(*) FILTER (WHERE status='Under Review')::int AS under_review,
+              COUNT(*) FILTER (WHERE status='Terminated')::int AS terminated,
+              COALESCE((
+                SELECT SUM(p.amount)
+                  FROM payments p
+                  JOIN clients c USING (account_no)
+                 WHERE c.branch_code=$1 AND p.status='Verified'
+                    AND TO_CHAR(COALESCE(p.verified_at AT TIME ZONE 'Asia/Manila', p.payment_date::timestamp), 'YYYY-MM') =
+                       TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila', 'YYYY-MM')
+              ), 0) AS collected_this_month
+         FROM clients
+        WHERE branch_code=$1`,
+      [req.user.branchCode]
+    );
+    res.json(rows[0]);
+  } catch (e) {
+    console.error('GET /api/staff/dashboard error:', e);
+    res.status(500).json({ error: 'Could not load branch dashboard counts.' });
+  }
+});
+
 // GET /api/staff/clients.csv  (Export CSV)
 router.get('/clients.csv', async (req, res) => {
   const { rows } = await query(
