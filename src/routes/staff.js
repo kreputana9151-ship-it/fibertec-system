@@ -259,6 +259,8 @@ router.get('/payments/queue', async (req, res) => {
   const q = (await query(
     `SELECT ROW_NUMBER() OVER (${FIFO_ORDER}) AS queue_no, p.payment_id, p.account_no, c.name, p.amount, p.payment_type, p.method,
             s.amount AS statement_total, COALESCE(v.verified_paid, 0) AS verified_paid,
+            GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS remaining_balance,
+            p.amount > GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS exceeds_balance,
             p.reference_no, p.created_at AS submitted_at, EXTRACT(EPOCH FROM (now() - p.created_at))::int AS waiting_seconds
        FROM payments p JOIN clients c USING (account_no)
        JOIN statements s ON s.statement_id=p.statement_id
@@ -324,7 +326,7 @@ router.get('/payments', async (req, res) => {
 
 // POST /api/staff/payments/cash
 router.post('/payments/cash', async (req, res) => {
-  const { statementId, amount, orNo } = req.body || {};
+  const { statementId, amount } = req.body || {};
   try {
     const out = await tx(async c => {
       const s = (await c.query(
@@ -351,13 +353,18 @@ router.post('/payments/cash', async (req, res) => {
           : 'A partially paid statement requires full payment of its remaining balance.');
       if (pastDue && !isFull) throw new Error('Account is past due: full remaining balance is required.');
       const p = await c.query(
-        `INSERT INTO payments (statement_id, account_no, amount, method, payment_type, or_no, payment_date)
-         VALUES ($1,$2,$3,'Cash',$4,$5,current_date) RETURNING payment_id`,
-        [statementId, s.account_no, amt, isFull ? 'Full payment' : 'Partial payment', orNo || null]);
+        `INSERT INTO payments (statement_id, account_no, amount, method, payment_type, payment_date)
+         VALUES ($1,$2,$3,'Cash',$4,current_date) RETURNING payment_id`,
+        [statementId, s.account_no, amt, isFull ? 'Full payment' : 'Partial payment']);
       return applyVerifiedPayment(c, p.rows[0].payment_id, req.user.userId, req.user.branchCode);
     });
     res.status(201).json({ ok: true, orNo: out, message: `Cash payment recorded and verified (O.R. ${out}).` });
-  } catch (e) { res.status(400).json({ error: e.message }); }
+  } catch (e) {
+    if (e.code === '23505' && e.constraint === 'uq_payments_one_pending_per_account') {
+      return res.status(409).json({ error: 'This client already has a payment waiting for staff verification.' });
+    }
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // PATCH /api/staff/payments/:id/verify

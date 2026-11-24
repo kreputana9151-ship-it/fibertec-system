@@ -122,7 +122,11 @@ function selectStmt(id) { selId = id; renderStatements(); }
 function downloadPdf(id, inv) {                                        // saves the PDF straight to the Downloads folder
   toast("Preparing your statement...");
   fetch("/api/client/statements/" + id + "/pdf", { headers: { Authorization: "Bearer " + sessionStorage.getItem("fiberToken") }, cache: "no-store" }).then(function (r) {
-    if (r.status == 401) { sessionStorage.clear(); location.replace("index.html"); throw { status: 401 }; }
+    if (r.status == 401) { redirectToLogin("session-expired"); throw { status: 401 }; }
+    if (r.status == 403) return r.json().then(function (d) {
+      if (d.mustChangePassword) { redirectToLogin("password-reset"); throw { status: 401 }; }
+      throw { message: d.error || "Could not create the PDF." };
+    });
     if (!r.ok) throw { message: "Could not create the PDF." }; return r.blob();
   }).then(function (b) {
     var a = document.createElement("a"), u = URL.createObjectURL(b); a.href = u; a.download = "FiberTec-Statement-" + inv.replace(/[^A-Za-z0-9-]+/g, "") + ".pdf";

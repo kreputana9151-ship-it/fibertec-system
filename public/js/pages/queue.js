@@ -21,15 +21,21 @@ function fmtDur(ms) {
   return d ? d + "d " + h + "h " + m + "m" : h ? h + "h " + m + "m " + x + "s" : m + "m " + x + "s";
 }
 function subMs(p) { return Date.parse(p.submitted_at); }                      // real created_at of the payment
+function paymentExceedsBalance(p) {
+  return !!p && (p.exceeds_balance || Number(p.amount) > Number(p.remaining_balance));
+}
 function qInfo(p) { return "Submitted " + fmtTs(p.submitted_at) + " &middot; " + p.payment_type + " &middot; " + (p.method == "GCash" ? "GCash Ref " + fmtRef(p.reference_no || "") : "Cash proof") + " &middot; " + peso(p.amount); }
 function waitSpan(p) { return "<span class='fifo-wait'>Waiting: <b data-ts='" + subMs(p) + "'>" + fmtDur(Date.now() - subMs(p)) + "</b></span>"; }
 function headCard(p) {
+  var over = paymentExceedsBalance(p);
   return "<div class='fifo-now'><div class='fifo-top'><span class='fifo-badge'>QUEUE #1 &middot; NOW SERVING / NEXT TO VERIFY</span>" + waitSpan(p) + "</div>" +
+    (over ? "<div class='warn red' style='margin:10px 0'><b>OVERPAYMENT FLAG:</b> This payment exceeds the remaining statement balance by " + peso(Number(p.amount) - Number(p.remaining_balance)) + ". Do not verify it; reject and contact the client.</div>" : "") +
     "<div class='fifo-body'><span><b>" + esc(p.name) + "</b> (" + p.account_no + ")<small>" + qInfo(p) + "</small></span>" +
-    "<span class='fifo-act'><button class='btn btn-green' onclick='askVerify(" + p.payment_id + ")'>Match / Valid</button><button class='btn btn-red' onclick='rejectRef(" + p.payment_id + ")'>Reject / Flag</button></span></div></div>";
+    "<span class='fifo-act'><button class='btn btn-green' " + (over ? "disabled title='Payment exceeds remaining balance'" : "") + " onclick='askVerify(" + p.payment_id + ")'>Match / Valid</button><button class='btn btn-red' onclick='rejectRef(" + p.payment_id + ")'>Reject / Flag</button></span></div></div>";
 }
 function waitRow(p) {
-  return "<div class='fifo-row'><span class='fifo-n'>#" + p.queue_no + "</span><span class='fifo-who'><b>" + esc(p.name) + "</b> (" + p.account_no + ")<small>" + qInfo(p) + "</small></span>" + waitSpan(p) +
+  var over = paymentExceedsBalance(p);
+  return "<div class='fifo-row'><span class='fifo-n'>#" + p.queue_no + "</span><span class='fifo-who'><b>" + esc(p.name) + "</b> (" + p.account_no + ")<small>" + qInfo(p) + (over ? "<br><b style='color:#b82528'>OVERPAYMENT: " + peso(Number(p.amount) - Number(p.remaining_balance)) + " above remaining balance</b>" : "") + "</small></span>" + waitSpan(p) +
     "<span class='badge orange'>&#128274; Waiting in Queue</span>" +
     "<span class='fifo-act'><button class='btn btn-green' disabled title='Only Queue #1 can be verified'>Match / Valid</button><button class='btn btn-red' disabled title='Only Queue #1 can be verified'>Reject / Flag</button></span></div>";
 }

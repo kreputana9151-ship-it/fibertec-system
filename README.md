@@ -202,9 +202,11 @@ git push
 
 - Passwords are stored as bcrypt hashes (never plain text). Starting password for the seeded accounts = `SEED_PASSWORD` in `.env`.
 - Owner resets anyone's password (client, staff, or own): `POST /api/admin/users/:userId/reset-password {newPassword}` (find the user with `GET /api/admin/users?q=...`). The person must set their own password at next login.
+- Admins can also reset a client's password from the client details panel; the one-time temporary password forces a new password before client API access.
 - Clients use **Forgot password?** on the login page to get an email link (valid 30 minutes). Staff/admin ask the owner.
 - Already ran the old `schema.sql`? Run `database/migrate_login_update.sql` once, then `npm run seed` is not needed again.
 - Existing databases also need `database/migrate_current_balance.sql` once to add and initialize the live client balance column.
+- Run `database/enforce_auth_payment_integrity.sql` once on existing databases to enable account lockouts, unique pending requests, GCash-reference protection, and sequential unique official receipts.
 
 ## Custom address (instead of localhost:3000)
 1. Add this line to your hosts file, then save (Windows: open Notepad as Administrator, file `C:\Windows\System32\drivers\etc\hosts`; Mac/Linux: `sudo nano /etc/hosts`):

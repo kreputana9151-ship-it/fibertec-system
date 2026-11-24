@@ -27,12 +27,38 @@ function api(path, body, token) {
   return fetch("/api/auth/" + path, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, token ? { Authorization: "Bearer " + token } : {}), body: JSON.stringify(body) })
     .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); });
 }
+var SESSION_REDIRECTING = false;
+function clearBrowserAuthState() {
+  try { sessionStorage.clear(); } catch (e) { console.warn("Could not clear session storage:", e); }
+  try { localStorage.clear(); } catch (e) { console.warn("Could not clear local storage:", e); }
+  try {
+    document.cookie.split(";").forEach(function (cookie) {
+      var name = cookie.split("=")[0].trim();
+      if (name) document.cookie = name + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax";
+    });
+  } catch (e) {
+    console.warn("Could not clear browser cookies:", e);
+  }
+}
+function redirectToLogin(reason) {
+  if (SESSION_REDIRECTING) return;
+  SESSION_REDIRECTING = true;
+  clearBrowserAuthState();
+  location.replace("index.html?reason=" + encodeURIComponent(reason || "session-expired"));
+}
 function apiCall(method, path, body) {                                  // authenticated call to the backend
   var t = sessionStorage.getItem("fiberToken"), h = {};
   if (body) h["Content-Type"] = "application/json"; if (t) h.Authorization = "Bearer " + t;
   return fetch(path, { method: method, headers: h, body: body ? JSON.stringify(body) : undefined, cache: "no-store" }).then(function (r) {
     return r.json().catch(function () { return {}; }).then(function (d) {
-      if (r.status == 401) { sessionStorage.clear(); location.replace("index.html"); throw { status: 401, message: "Session expired" }; }
+      if (r.status == 401) {
+        redirectToLogin("session-expired");
+        throw { status: 401, message: "Session expired. Please log in again." };
+      }
+      if (r.status == 403 && d.mustChangePassword) {
+        redirectToLogin("password-reset");
+        throw { status: 401, message: d.error || "Your password was reset. Sign in again to set a new password." };
+      }
       if (!r.ok) throw { status: r.status, message: d.error || "Request failed" };
       return d;
     });
@@ -72,6 +98,14 @@ function changeFirstPassword() {
 }
 function logout() { sessionStorage.clear(); location.href = "index.html"; }
 function requireRole(role) { if (sessionStorage.getItem("fiberRole") == role) return true; location.replace("index.html"); return false; }
+function showLoginRedirectMessage() {
+  var error = $("error");
+  if (!error) return;
+  var reason = new URLSearchParams(location.search).get("reason");
+  if (reason === "session-expired") error.textContent = "Session expired. Please log in again.";
+  else if (reason === "password-reset") error.textContent = "Your password was reset. Sign in with the temporary password to choose a new password.";
+}
+showLoginRedirectMessage();
 function toggleSidebar() { $("layout").classList.toggle("collapsed"); }
 function showSection(ids, id, prefix) {
   ids.forEach(function (i) { var e = $(i); if (e) e.classList.add("hidden"); var l = $(prefix + i); if (l) l.classList.remove("active"); });

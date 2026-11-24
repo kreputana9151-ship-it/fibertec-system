@@ -33,7 +33,10 @@ CREATE TABLE users (
   role          VARCHAR(10)  NOT NULL CHECK (role IN ('client','staff','admin')),
   is_active     BOOLEAN      NOT NULL DEFAULT TRUE,
   must_change_password BOOLEAN NOT NULL DEFAULT FALSE,   -- TRUE after the owner resets a password
-  created_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
+  failed_login_attempts SMALLINT NOT NULL DEFAULT 0,
+  login_locked_until TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT chk_users_failed_login_attempts CHECK (failed_login_attempts BETWEEN 0 AND 5)
 );
 
 -- "Forgot password" links for clients (only a hash of the token is stored)
@@ -201,6 +204,16 @@ CREATE INDEX idx_clients_branch    ON clients(branch_code);
 CREATE INDEX idx_payments_account  ON payments(account_no, payment_date);
 CREATE INDEX idx_payments_status   ON payments(status);
 CREATE INDEX idx_payments_queue    ON payments(status, created_at, payment_id) WHERE status = 'Pending';   -- FIFO queue lookup
+CREATE SEQUENCE official_receipt_seq;
+CREATE UNIQUE INDEX uq_payments_or_no
+  ON payments(or_no) WHERE or_no IS NOT NULL;
+CREATE UNIQUE INDEX uq_payments_gcash_reference_active
+  ON payments(reference_no)
+  WHERE method='GCash' AND status IN ('Pending','Verified') AND reference_no IS NOT NULL;
+CREATE UNIQUE INDEX uq_payments_one_pending_per_account
+  ON payments(account_no) WHERE status='Pending';
+CREATE UNIQUE INDEX uq_cancellations_one_pending_per_account
+  ON cancellation_requests(account_no) WHERE status='Pending';
 CREATE INDEX idx_statements_acct   ON statements(account_no, billing_month);
 CREATE INDEX idx_notices_account   ON notices(account_no, notice_date);
 

@@ -211,6 +211,19 @@ async function runStatusEngine() {
 
 /* Apply a VERIFIED payment to its statement, issue the OR number,
    and return the account to Active if the full balance is cleared. */
+async function nextOfficialReceipt(c) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const generated = (await c.query(
+      `SELECT nextval('official_receipt_seq'::regclass) AS sequence,
+              EXTRACT(YEAR FROM CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::int AS year`
+    )).rows[0];
+    const orNo = `OR-${generated.year}-${String(generated.sequence).padStart(6, '0')}`;
+    const existing = await c.query('SELECT 1 FROM payments WHERE or_no=$1 LIMIT 1', [orNo]);
+    if (!existing.rowCount) return orNo;
+  }
+  throw new Error('Could not allocate a unique official receipt number. Please retry verification.');
+}
+
 async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
   const p = (await c.query('SELECT * FROM payments WHERE payment_id=$1 FOR UPDATE', [paymentId])).rows[0];
   if (!p || p.status !== 'Pending') throw new Error('Pending payment not found.');
@@ -222,7 +235,10 @@ async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
        FROM payments WHERE statement_id=$1 AND status='Verified'`, [s.statement_id]
   )).rows[0].total);
   const remaining = Math.max(Number(s.amount) - verified, 0);
-  if (Number(p.amount) > remaining) throw new Error('Payment exceeds the remaining statement balance.');
+  if (Number(p.amount) > remaining) {
+    const excess = Number(p.amount) - remaining;
+    throw new Error(`Payment exceeds the remaining statement balance by PHP ${excess.toFixed(2)}. Reject this payment instead of verifying it.`);
+  }
   const terminated = client && String(client.status).toLowerCase() === 'terminated';
   if ((terminated || verified > 0 || String(s.payment_status).toLowerCase() === 'partially paid') && Number(p.amount) !== remaining)
     throw new Error(terminated
@@ -231,7 +247,7 @@ async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
 
   const paid = verified + Number(p.amount);
   const balance = Math.max(Number(s.amount) - paid, 0);
-  const orNo = p.or_no || `OR-${new Date().getFullYear()}-${String(paymentId).padStart(6, '0')}`;
+  const orNo = await nextOfficialReceipt(c);
   await c.query(
     'UPDATE statements SET amount_paid=$2, balance=$3, payment_status=$4 WHERE statement_id=$1',
     [s.statement_id, paid, balance, balance === 0 ? 'Paid' : 'Partially paid']

@@ -62,11 +62,14 @@ function notHead(id) {
   toast("FIFO: please process Queue #1 (the oldest submission) first.", "error"); refreshPayments(); return true;
 }
 function paymentBreakdownHtml(total, previous, current) {
-  var remaining = Math.max(0, Number(total) - Number(previous) - Number(current));
+  var remainingBefore = Math.max(0, Number(total) - Number(previous));
+  var excess = Math.max(0, Number(current) - remainingBefore);
+  var remaining = Math.max(0, remainingBefore - Number(current));
   return "<div class='payment-breakdown-row'><span>Statement total</span><b>" + peso(total) + "</b></div>" +
     "<div class='payment-breakdown-row'><span>Previously verified</span><b>" + peso(previous) + "</b></div>" +
     "<div class='payment-breakdown-row'><span>This payment</span><b>" + peso(current) + "</b></div>" +
-    "<div class='payment-breakdown-row'><span>Remaining after verification</span><b>" + peso(remaining) + "</b></div>";
+    (excess ? "<div class='payment-breakdown-row' style='color:#b82528'><span>OVERPAYMENT - do not verify</span><b>" + peso(excess) + "</b></div>" :
+      "<div class='payment-breakdown-row'><span>Remaining after verification</span><b>" + peso(remaining) + "</b></div>");
 }
 function showPaymentReceipt(p, orNo) {
   modal2("<div class='dlg-head'>Payment receipt<button class='x' onclick='closeModal()'>&times;</button></div><div class='dlg-body'>" +
@@ -75,6 +78,10 @@ function showPaymentReceipt(p, orNo) {
 }
 function askVerify(id) {
   if (notHead(id)) return; var p = queueItem(id);
+  if (paymentExceedsBalance(p)) {
+    toast("This payment exceeds the remaining statement balance. Reject it and contact the client.", "error");
+    return;
+  }
   confirmBox("Verify payment", "Please make sure the reference number matches the client's GCash receipt before you continue.<br><br><b>" + esc(p.name) + "</b> (" + p.account_no + ")<br>" + p.payment_type + " &middot; " + peso(p.amount) + "<br>Ref # <b>" + fmtRef(p.reference_no || "") + "</b><br><div class='payment-breakdown'>" + paymentBreakdownHtml(p.statement_total, p.verified_paid, p.amount) + "</div><br>An official receipt (O.R.) will be issued automatically.<br><br>Do you want to verify this payment?", "Yes, verify", function () { doQueueAction(id, "verify"); });
 }
 function rejectRef(id) {
@@ -82,8 +89,13 @@ function rejectRef(id) {
   confirmBox("Reject reference number", "Are you sure you want to reject Ref # <b>" + fmtRef(p.reference_no || "") + "</b> from " + esc(p.name) + "?", "Yes, reject", function () { doQueueAction(id, "reject"); }, true);
 }
 function doQueueAction(id, act) {                                      // PATCH /api/staff/payments/:id/verify | reject
-  if (BUSY) return; BUSY = true;
+  if (BUSY) return;
   var p = queueItem(id);
+  if (act == "verify" && paymentExceedsBalance(p)) {
+    toast("This payment exceeds the remaining statement balance. Reject it and contact the client.", "error");
+    return;
+  }
+  BUSY = true;
   apiCall("PATCH", "/api/staff/payments/" + id + "/" + act).then(function (d) {
     toast(act == "verify" ? "Payment verified. O.R. issued: " + d.orNo : "Payment rejected.");
     if (act == "verify" && p) showPaymentReceipt(p, d.orNo);

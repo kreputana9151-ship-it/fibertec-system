@@ -1,10 +1,10 @@
 const router = require('express').Router();
 const bcrypt = require('bcrypt');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requireRole, requirePasswordChangeComplete } = require('../middleware/auth');
 const { query } = require('../db');
 const { buildStatementPdf, loadStatement } = require('../services/statementPdf');
 
-router.use(requireAuth, requireRole('client'));
+router.use(requireAuth, requireRole('client'), requirePasswordChangeComplete);
 const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
 
 // GET /api/client/me  -> account overview (dates are sent as plain YYYY-MM-DD text, no time-zone shifting)
@@ -102,6 +102,13 @@ router.post('/payments', wrap(async (req, res) => {
   if (typeof referenceNo !== 'string') return res.status(400).json({ error: 'GCash reference must be a 13-digit string.' });
   if (/\s/.test(referenceNo)) return res.status(400).json({ error: 'GCash reference must not contain whitespace.' });
   if (!/^[0-9]{13}$/.test(referenceNo)) return res.status(400).json({ error: 'GCash reference must be 13 digits' });
+  if ((await query(
+    `SELECT 1 FROM payments
+      WHERE method='GCash' AND reference_no=$1 AND status IN ('Pending','Verified')
+      LIMIT 1`, [referenceNo]
+  )).rowCount) {
+    return res.status(409).json({ error: 'This GCash reference number has already been submitted or verified.' });
+  }
 
   const s = (await query(
     `SELECT s.*, c.status AS client_status, COALESCE(v.verified_paid, 0) AS verified_paid,
@@ -138,7 +145,15 @@ router.post('/payments', wrap(async (req, res) => {
        VALUES ($1,$2,$3,'GCash',$4,$5,current_date) RETURNING payment_id, status`,
       [statementId, req.user.accountNo, amt, isFull ? 'Full payment' : 'Partial payment', referenceNo]);
     res.status(201).json(r.rows[0]);
-  } catch (e) { next500(res, e); }
+  } catch (e) {
+    if (e.code === '23505' && e.constraint === 'uq_payments_gcash_reference_active') {
+      return res.status(409).json({ error: 'This GCash reference number has already been submitted or verified.' });
+    }
+    if (e.code === '23505' && e.constraint === 'uq_payments_one_pending_per_account') {
+      return res.status(409).json({ error: 'You already have a payment waiting for staff verification.' });
+    }
+    next500(res, e);
+  }
 }));
 
 // POST /api/client/cancellation  { reason, password }   (the client confirms with their password)
@@ -150,11 +165,18 @@ router.post('/cancellation', wrap(async (req, res) => {
   const u = (await query('SELECT password_hash FROM users WHERE user_id=$1', [req.user.userId])).rows[0];
   if (!u || !(await bcrypt.compare(password, u.password_hash))) return res.status(403).json({ error: 'Incorrect password. Cancellation was not submitted.' });
   const open = await query("SELECT 1 FROM cancellation_requests WHERE account_no=$1 AND status='Pending'", [req.user.accountNo]);
-  if (open.rowCount) return res.status(409).json({ error: 'You already have a pending request' });
-  const r = await query(
-    `INSERT INTO cancellation_requests (account_no, request_date, reason) VALUES ($1,current_date,$2) RETURNING request_id, status`,
-    [req.user.accountNo, reason]);
-  res.status(201).json(r.rows[0]);
+  if (open.rowCount) return res.status(409).json({ error: 'You already have a pending request.' });
+  try {
+    const r = await query(
+      `INSERT INTO cancellation_requests (account_no, request_date, reason) VALUES ($1,current_date,$2) RETURNING request_id, status`,
+      [req.user.accountNo, reason]);
+    res.status(201).json(r.rows[0]);
+  } catch (e) {
+    if (e.code === '23505' && e.constraint === 'uq_cancellations_one_pending_per_account') {
+      return res.status(409).json({ error: 'You already have a pending request.' });
+    }
+    next500(res, e);
+  }
 }));
 
 function next500(res, e) { console.error(e); res.status(500).json({ error: 'Server error' }); }

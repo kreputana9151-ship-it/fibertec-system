@@ -75,6 +75,14 @@ async function adminApi(path, opts) {
   var fetchOpts = Object.assign({ credentials: "same-origin" }, opts, { headers: headers, cache: "no-store" });
   var res = await fetch("/api/admin" + path, fetchOpts);
   var data = await res.json().catch(function () { return {}; });
+  if (res.status === 401) {
+    redirectToLogin("session-expired");
+    throw { status: 401, message: "Session expired. Please log in again." };
+  }
+  if (res.status === 403 && data.mustChangePassword) {
+    redirectToLogin("password-reset");
+    throw { status: 401, message: data.error || "Your password was reset. Sign in again to set a new password." };
+  }
   if (!res.ok) throw new Error(data.error || ("Request failed (" + res.status + ")"));
   return data;
 }

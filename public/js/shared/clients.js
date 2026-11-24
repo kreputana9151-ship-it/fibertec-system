@@ -381,7 +381,7 @@ function viewClient(no) {
   if (c.status == "Terminated") extra = "<div class='cd-note'><div class='warn red'><b>Terminated</b>" + (c.termDate ? " on " + safeFmtD(c.termDate) : "") + " &middot; " + esc(c.termReason || "Non-Payment") + "</div></div>";
   if (c.status == "Grace Period") extra = "<div class='cd-note'><div class='warn amber'><b>Grace period</b>" + (c.graceEnd ? " ends " + safeFmtD(c.graceEnd) : "") + " (" + c.graceLeft + " day" + (c.graceLeft == 1 ? "" : "s") + " left)</div></div>";
   modal2("<div class='cd-hero'><span class='avatar'>" + initials(c.name) + "</span><div><h2>" + esc(c.name) + "</h2><small>Account " + c.no + " &middot; " + esc(c.branch) + " Branch</small><div style='margin-top:8px'>" + badgeFor(c.status) + "</div></div>" +
-    (isAdmin() ? "<button class='btn btn-light' onclick='editClient(\"" + c.no + "\")'>Edit Client</button>" : "") +
+    (isAdmin() ? "<button class='btn btn-light' onclick='editClient(\"" + c.no + "\")'>Edit Client</button><button class='btn btn-light' onclick='resetClientPassword(\"" + c.no + "\")'>Reset Client Password</button>" : "") +
     "<button class='x dlg-x' style='background:none;border:0;color:#fff;font-size:28px;cursor:pointer' onclick='closeModal()'>&times;</button></div>" +
     "<div class='cd-stats'><div class='cd-stat'><small>Plan</small><b>" + esc(c.plan.replace(/\s*Mbps/, " Mbps")) + "</b></div><div class='cd-stat'><small>Monthly rate</small><b>" + peso(c.rate) + "</b></div><div class='cd-stat'><small>Payment status</small><b>" + esc(c.pay || "—") + "</b></div><div class='cd-stat'><small>Balance</small><b>" + peso(c.balance || 0) + "</b></div></div>" + (extra ? "<div style='height:14px'></div>" + extra : "") +
     "<div class='cd-grid'><div class='cd-sec'><h4>Records</h4>" + kv("Branch", esc(c.branch) + " Branch") + kv("Plan", "FiberTec " + esc(c.plan)) + kv("Installed date", safeFmtD(c.installed)) + kv("Monthly rate", peso(c.rate)) + kv("Payment due date", "Every " + ordinal(c.due || 15)) + "</div>" +
@@ -393,6 +393,42 @@ function viewClient(no) {
 
 /* ---------- Admin actions (Live Neon DB API) ---------- */
 function denyIfNotAdmin() { if (isAdmin()) return false; toast("Permission denied: only administrators can do this.", "error"); return true; }
+
+function resetClientPassword(no) {
+  if (denyIfNotAdmin()) return;
+  var c = findClientRecord(no);
+  if (!c) { toast("Client record not found.", "error"); return; }
+  confirmBox(
+    "Reset client password",
+    "Reset the Client Portal password for <b>" + esc(c.name) + "</b> (" + esc(c.no) + ")? A temporary password will be shown once, and the client must choose a new password at their next login.",
+    "Reset password",
+    function () { issueClientTemporaryPassword(no); },
+    true
+  );
+}
+
+async function issueClientTemporaryPassword(no) {
+  try {
+    var result = await adminApi("/clients/" + encodeURIComponent(no) + "/reset-password", { method: "POST" });
+    modal2(
+      "<div class='dlg-head'>Temporary password<button class='x' onclick='closeModal()'>&times;</button></div>" +
+      "<div class='dlg-body'><div class='warn amber'><b>Show this password to the client securely.</b> It will not be available in the portal again. The client must set a new password after signing in.</div>" +
+      "<label>Temporary password</label><input id='temporary-client-password' readonly onclick='this.select()' value='" + esc(result.temporaryPassword) + "'>" +
+      "<div class='dlg-foot'><button class='btn' onclick='copyTemporaryClientPassword(this)'>Copy password</button>" +
+      "<button class='btn btn-light' onclick='closeModal()'>Done</button></div></div>"
+    );
+  } catch (e) {
+    toast(e.message || "Could not reset the client password.", "error");
+  }
+}
+
+function copyTemporaryClientPassword(button) {
+  var input = button.closest(".dlg").querySelector("#temporary-client-password");
+  input.select();
+  var copied = false;
+  try { copied = document.execCommand("copy"); } catch (e) { console.warn("Could not copy the temporary password:", e); }
+  toast(copied ? "Temporary password copied." : "Select and copy the temporary password manually.", copied ? "" : "error");
+}
 
 function editClient(no) {
   if (denyIfNotAdmin()) return;
