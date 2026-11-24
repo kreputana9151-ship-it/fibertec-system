@@ -60,7 +60,7 @@ CREATE TABLE staff (
 -- ---------------------------------------------------------------------
 -- 3. Clients
 --    account_no = branch code (2) + year registered YY (2) + client no. (4)
---    e.g. 04260042 = Maybunga, registered 2026, client #42
+--    e.g. 04260042 = Bliss 3, registered 2026, client #42
 -- ---------------------------------------------------------------------
 CREATE TABLE clients (
   account_no         CHAR(8)  PRIMARY KEY,
@@ -245,10 +245,10 @@ INSERT INTO branches (branch_code, name, short_name, barangay) VALUES
   ('01', 'Bagong Ilog',      'BI', 'Bagong Ilog'),
   ('02', 'Caniogan',         'CN', 'Caniogan'),
   ('03', 'Palatiw',          'PT', 'Palatiw'),
-  ('04', 'Maybunga',         'MB', 'Maybunga'),
+  ('04', 'Bliss 3',          'B3', 'Maybunga'),
   ('05', 'Bliss 1',          'B1', 'San Nicolas'),
   ('06', 'Nagpayong',        'NP', 'Nagpayong'),
-  ('07', 'Bliss 3',          'B3', 'Maybunga');
+  ('07', 'Maybunga',         'MB', 'Maybunga');
 
 INSERT INTO plans (plan_name, monthly_rate) VALUES
   ('LiteSpeed 50Mbps',  799.00),
@@ -263,8 +263,8 @@ INSERT INTO users (login_id, password_hash, role) VALUES
   ('bagongilog',     '$2b$10$REPLACE_WITH_BCRYPT_HASH', 'staff'),
   ('caniogan',       '$2b$10$REPLACE_WITH_BCRYPT_HASH', 'staff'),
   ('palatiw',        '$2b$10$REPLACE_WITH_BCRYPT_HASH', 'staff'),
-  ('maybunga',       '$2b$10$REPLACE_WITH_BCRYPT_HASH', 'staff'),
   ('bliss3',         '$2b$10$REPLACE_WITH_BCRYPT_HASH', 'staff'),
+  ('maybunga',       '$2b$10$REPLACE_WITH_BCRYPT_HASH', 'staff'),
   ('bliss1',         '$2b$10$REPLACE_WITH_BCRYPT_HASH', 'staff'),
   ('nagpayong',      '$2b$10$REPLACE_WITH_BCRYPT_HASH', 'staff');
 
@@ -275,6 +275,6 @@ INSERT INTO admins (user_id, full_name)
 INSERT INTO staff (user_id, branch_code, full_name)
   SELECT u.user_id, b.branch_code, 'Staff - ' || b.name
     FROM (VALUES ('bagongilog','01'),('caniogan','02'),('palatiw','03'),
-                 ('maybunga','04'),('bliss1','05'),('nagpayong','06'),('bliss3','07')) m(login_id, branch_code)
+                 ('bliss3','04'),('bliss1','05'),('nagpayong','06'),('maybunga','07')) m(login_id, branch_code)
     JOIN users u ON u.login_id = m.login_id
     JOIN branches b ON b.branch_code = m.branch_code;

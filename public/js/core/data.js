@@ -9,10 +9,10 @@ var BRANCHES = [   // counts = [Active, Grace Period, Under Review, Terminated] 
   { name: "Bagong Ilog", code: "01", short: "BI", brgy: "Bagong Ilog", counts: [14, 3, 2, 3] },
   { name: "Caniogan", code: "02", short: "CN", brgy: "Caniogan", counts: [5, 1, 1, 1] },
   { name: "Palatiw", code: "03", short: "PT", brgy: "Palatiw", counts: [9, 3, 3, 2] },
-  { name: "Maybunga", code: "04", short: "MB", brgy: "Maybunga", counts: [4, 1, 0, 0] },
+  { name: "Bliss 3", code: "04", short: "B3", brgy: "Maybunga", counts: [11, 3, 2, 2] },
   { name: "Bliss 1", code: "05", short: "B1", brgy: "San Nicolas", counts: [12, 3, 2, 2] },
   { name: "Nagpayong", code: "06", short: "NP", brgy: "Nagpayong", counts: [7, 1, 1, 2] },
-  { name: "Bliss 3", code: "07", short: "B3", brgy: "Maybunga", counts: [11, 3, 2, 2] }
+  { name: "Maybunga", code: "07", short: "MB", brgy: "Maybunga", counts: [4, 1, 0, 0] }
 ];
 var STATUSES = ["Active", "Grace Period", "Under Review", "Terminated"];
 var PLANS = [{ n: "LiteSpeed 50Mbps", r: 799, w: .26 }, { n: "Turbo 110 Mbps", r: 999, w: .42 }, { n: "Elite 150 Mbps", r: 1299, w: .20 }, { n: "Premium 220 Mbps", r: 1450, w: .12 }];

@@ -16,10 +16,10 @@ var BRANCH_MAP = {
   "01": "Bagong Ilog",
   "02": "Caniogan",
   "03": "Palatiw",
-  "04": "Maybunga",
+  "04": "Bliss 3",
   "05": "Bliss 1",
   "06": "Nagpayong",
-  "07": "Bliss 3"
+  "07": "Maybunga"
 };
 
 function branchCodeForName(name) {
