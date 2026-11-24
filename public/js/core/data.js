@@ -9,7 +9,7 @@ var BRANCHES = [   // counts = [Active, Grace Period, Under Review, Terminated]
   { name: "Bagong Ilog", code: "01", short: "BI", brgy: "Bagong Ilog", counts: [14, 3, 2, 3] },
   { name: "Caniogan", code: "02", short: "CN", brgy: "Caniogan", counts: [5, 1, 1, 1] },
   { name: "Palatiw", code: "03", short: "PT", brgy: "Palatiw", counts: [9, 3, 3, 2] },
-  { name: "Maybunga Bliss 3", code: "04", short: "B3", brgy: "Maybunga", counts: [15, 4, 2, 2] },
+  { name: "Maybunga Bliss 3", code: "04", short: "B3", brgy: "Maybunga", counts: [0, 0, 0, 0] },
   { name: "Maybunga Bliss 1", code: "05", short: "B1", brgy: "Maybunga", counts: [12, 3, 2, 2] },
   { name: "Nagpayong", code: "06", short: "NP", brgy: "Nagpayong", counts: [7, 1, 1, 2] },
 ];
@@ -74,7 +74,7 @@ var BASE_CLIENTS = [], BASE_RECORDS = [], BASE_REQUESTS = [];
     { name: "Cholo Trinidad", b: "Nagpayong", s: "Active", plan: 1, due: 3, pay: "Paid", bill: "Delivered", email: "cholo@gmail.com", contact: "09175550333" },
     { name: "Keziah Harriette Reputana", b: "Bagong Ilog", s: "Grace Period", plan: 3, due: 21, pay: "Unpaid", bill: "Failed", email: "reputana@gmail.com", contact: "09937162786" },
     { name: "Danee Anne Arquero", b: "Bagong Ilog", s: "Active", plan: 0, due: 30, pay: "Paid", email: "arquero@gmail.com", contact: "09937267892" },
-    { name: "Iris Mie Yadao", b: "Maybunga Bliss 3", s: "Active", plan: 1, due: 25, pay: "Partially paid", email: "yadao@gmail.com", contact: "09422298771" },
+    { name: "Iris Mie Yadao", b: "Maybunga Bliss 1", s: "Active", plan: 1, due: 25, pay: "Partially paid", email: "yadao@gmail.com", contact: "09422298771" },
     { name: "Elaisa Nicole Bartolome", b: "Palatiw", s: "Terminated", plan: 2, due: 20, pay: "Unpaid", email: "Barts@gmail.com", contact: "09454478949" },
     { name: "Iris Anne Reputana", b: "Palatiw", s: "Under Review", plan: 1, due: 23, pay: "Unpaid", reason: "Non-payment", email: "anne@gmail.com", contact: "09488763422" },
     { name: "Maria Santos", b: "Maybunga Bliss 1", s: "Active", plan: 0, due: 12, pay: "Paid", email: "maria@gmail.com", contact: "09175550102" },

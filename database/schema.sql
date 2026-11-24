@@ -60,7 +60,7 @@ CREATE TABLE staff (
 -- ---------------------------------------------------------------------
 -- 3. Clients
 --    account_no = branch code (2) + year registered YY (2) + client no. (4)
---    --    e.g. 04260042 = Maybunga Bliss 3, registered 2026, client #42
+--    e.g. 04260042 = Maybunga Bliss 3, registered 2026, client #42
 --         05260042 = Maybunga Bliss 1, registered 2026, client #42
 -- ---------------------------------------------------------------------
 CREATE TABLE clients (
