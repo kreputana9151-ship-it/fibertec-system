@@ -162,13 +162,23 @@ router.get('/clients', async (req, res) => {
               c.contact_no,
               c.address,
               b.name AS branch,
+              c.plan_id,
               p.plan_name,
               p.monthly_rate,
               c.current_balance,
+              COALESCE((
+                SELECT SUM(s.balance)
+                  FROM statements s
+                 WHERE s.account_no = c.account_no
+                   AND s.payment_status IN ('Unpaid', 'Partially paid')
+                   AND s.balance > 0
+              ), 0) AS outstanding_balance,
               c.status,
               c.status_reason,
               c.due_day,
               c.email,
+              c.facebook,
+              c.router_location,
               TO_CHAR(c.registered_date, 'YYYY-MM-DD') AS registered_date,
               TO_CHAR(c.termination_date, 'YYYY-MM-DD') AS termination_date,
               TO_CHAR(c.registered_date, 'YYYY-MM') AS created_month,
@@ -256,6 +266,57 @@ router.post('/notices/:id/resend', async (req, res) => {
     await logActivity(c, req.user.userId, null, `Resent notice #${n.notice_id}`);
   });
   res.json({ delivered: ok });
+});
+
+// PATCH /api/admin/clients/:accountNo
+router.patch('/clients/:accountNo', async (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  const contactNo = String(b.contactNo || '').trim();
+  const email = String(b.email || '').trim().toLowerCase();
+  const address = String(b.address || '').trim();
+  const planId = Number(b.planId);
+  const facebook = String(b.facebook || '').trim() || null;
+  const routerLocation = String(b.routerLocation || '').trim() || null;
+
+  if (!name || !contactNo || !email || !address || !Number.isInteger(planId)) {
+    return res.status(400).json({ error: 'Please complete the client name, contact number, email, address, and plan.' });
+  }
+  if (!/^09[0-9]{9}$/.test(contactNo)) {
+    return res.status(400).json({ error: 'Mobile number must be 11 digits starting with 09.' });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Please enter a valid client email address.' });
+  }
+  if (name.length > 100 || contactNo.length > 15 || email.length > 100 ||
+      address.length > 255 || (facebook && facebook.length > 100) ||
+      (routerLocation && routerLocation.length > 150)) {
+    return res.status(400).json({ error: 'One or more client fields exceed the allowed length.' });
+  }
+
+  try {
+    await tx(async c => {
+      const dup = await c.query(
+        'SELECT 1 FROM clients WHERE LOWER(email)=$1 AND account_no<>$2 LIMIT 1',
+        [email, req.params.accountNo]
+      );
+      if (dup.rows.length) throw new Error('Another client account already uses this email address.');
+      const plan = await c.query('SELECT 1 FROM plans WHERE plan_id=$1', [planId]);
+      if (!plan.rows.length) throw new Error('Selected internet plan was not found.');
+
+      const updated = await c.query(
+        `UPDATE clients
+            SET name=$2, contact_no=$3, email=$4, address=$5, plan_id=$6,
+                router_location=$7, facebook=$8
+          WHERE account_no=$1`,
+        [req.params.accountNo, name, contactNo, email, address, planId, routerLocation, facebook]
+      );
+      if (!updated.rowCount) throw new Error('Client not found.');
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // PATCH /api/admin/clients/:accountNo/status  { status: 'Active'|'Terminated', reason }

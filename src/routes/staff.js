@@ -15,6 +15,13 @@ router.get('/clients', async (req, res) => {
     const q = `%${req.query.q || ''}%`;
     const { rows } = await query(
       `SELECT c.account_no, c.name, c.contact_no, c.email, c.address, c.status, c.current_balance,
+              COALESCE((
+                SELECT SUM(s.balance)
+                  FROM statements s
+                 WHERE s.account_no = c.account_no
+                   AND s.payment_status IN ('Unpaid', 'Partially paid')
+                   AND s.balance > 0
+              ), 0) AS outstanding_balance,
               c.status_reason, c.facebook, c.router_location,
               p.plan_id, p.plan_name, p.monthly_rate, c.due_day,
               TO_CHAR(c.registered_date, 'YYYY-MM-DD') AS registered_date,
@@ -279,7 +286,8 @@ router.patch('/payments/:id/reject', async (req, res) => {
 router.get('/cancellations', async (req, res) => {
   const { rows } = await query(
     `SELECT r.*, c.name FROM cancellation_requests r JOIN clients c USING (account_no)
-      WHERE c.branch_code=$1 ORDER BY r.created_at DESC`, [req.user.branchCode]);
+      WHERE c.branch_code=$1 AND r.status='Pending'
+      ORDER BY r.created_at DESC`, [req.user.branchCode]);
   res.json(rows);
 });
 

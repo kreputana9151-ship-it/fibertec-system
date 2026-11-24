@@ -39,7 +39,12 @@ router.post('/login', limit(10, 5 * 60 * 1000), wrap(async (req, res) => {
   const { loginId, password } = req.body || {};
   if (!loginId || !password) return res.status(400).json({ error: 'Username and password required' });
 
-  const rows = await findUsers(String(loginId).trim());
+  const identifier = String(loginId);
+  if (identifier !== identifier.trim()) {
+    return res.status(400).json({ error: 'Account number, email, or username must not have leading or trailing spaces.' });
+  }
+
+  const rows = await findUsers(identifier);
   if (rows.length > 1) return res.status(400).json({ error: 'More than one account uses this email. Please log in with your 8-digit account number.' });
   const u = rows[0];
   if (!u || !u.is_active || !(await bcrypt.compare(String(password), u.password_hash)))

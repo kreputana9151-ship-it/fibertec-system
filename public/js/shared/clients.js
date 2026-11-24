@@ -82,6 +82,9 @@ function getAllActiveClients() {
         var diffMs = new Date(String(graceEnd).slice(0, 10) + "T23:59:59+08:00") - new Date();
         graceLeft = Math.max(0, Math.ceil(diffMs / 86400000));
       }
+      var balance = c.status === "Terminated" && c.outstanding_balance != null
+        ? Number(c.outstanding_balance)
+        : (liveBill ? liveBill.balance : 0);
 
       return Object.assign({}, base, {
         no: c.no,
@@ -94,8 +97,10 @@ function getAllActiveClients() {
         status: c.status,
         due: Number(c.due_day || base.due || 15),
         dueISO: liveBill ? liveBill.dueISO : "",
-        pay: liveBill ? liveBill.pay : "Paid",
-        balance: liveBill ? liveBill.balance : 0,
+        pay: c.status === "Terminated" && c.outstanding_balance != null
+          ? (balance <= 0 ? "Paid" : "Unpaid")
+          : (liveBill ? liveBill.pay : "Paid"),
+        balance: balance,
         graceEnd: graceEnd,
         graceLeft: graceLeft,
         reason: c.status_reason || base.reason || "Overdue Balance",
@@ -104,8 +109,8 @@ function getAllActiveClients() {
         termReason: c.termination_reason || c.status_reason || base.termReason || "Terminated",
         installed: c.registered_date ? String(c.registered_date).slice(0, 10) : "",
         address: c.address || base.address || "",
-        fb: base.fb || "",
-        device: c.router_location || base.device || ""
+        fb: c.facebook || "",
+        device: c.router_location || ""
       });
     });
   }
@@ -129,6 +134,7 @@ async function syncStaffClients() {
         var diffMs = new Date(String(graceEnd).slice(0, 10) + "T23:59:59+08:00") - new Date();
         graceLeft = Math.max(0, Math.ceil(diffMs / 86400000));
       }
+      var outstanding = r.outstanding_balance != null ? Number(r.outstanding_balance) : Number(base.balance || 0);
       return Object.assign({}, base, {
         no: r.account_no,
         name: r.name,
@@ -137,11 +143,13 @@ async function syncStaffClients() {
         branch: STAFF_BRANCH || base.branch || "",
         plan: r.plan_name || base.plan || "LiteSpeed 50Mbps",
         rate: Number(r.monthly_rate || base.rate || 0),
-        balance: r.current_balance != null ? Number(r.current_balance) : Number(base.balance || 0),
+        balance: r.status === "Terminated" ? outstanding : (r.current_balance != null ? Number(r.current_balance) : Number(base.balance || 0)),
         status: r.status || "Active",
         due: Number(r.due_day || base.due || 15),
         dueISO: base.dueISO || "",
-        pay: base.pay || "Paid",
+        pay: r.status === "Terminated"
+          ? (outstanding <= 0 ? "Paid" : "Unpaid")
+          : (base.pay || "Paid"),
         graceEnd: graceEnd,
         graceLeft: graceLeft,
         reason: r.status_reason || base.reason || "Client Cancellation Request",
@@ -150,8 +158,8 @@ async function syncStaffClients() {
         termReason: r.termination_reason || r.status_reason || base.termReason || "",
         installed: r.registered_date ? String(r.registered_date).slice(0, 10) : "",
         address: r.address || base.address || "",
-        fb: base.fb || "",
-        device: r.router_location || base.device || ""
+        fb: r.facebook || "",
+        device: r.router_location || ""
       });
     });
     LIVE_STAFF_LOADED = true;
@@ -376,6 +384,7 @@ function viewClient(no) {
   var c = findClientRecord(no);
   if (!c) { toast("Client record not found.", "error"); return; }
   var liveBill = getLiveBillingSummary(no, c.rate);
+  var deviceLocation = String(c.device || "").trim() || "Standard indoor ONT placement";
   var s = liveBill && liveBill.latest
     ? { inv: liveBill.latest.inv || "—", bill: liveBill.latest.bill || c.installed || "", due: liveBill.latest.due || "", paid: liveBill.latest.paid || 0, amount: liveBill.latest.amount || c.rate || 0 }
     : { inv: "—", bill: c.installed || "", due: c.dueISO || "", paid: 0, amount: c.rate || 0 };
@@ -383,17 +392,86 @@ function viewClient(no) {
   if (c.status == "Under Review") extra = "<div class='cd-note'><div class='warn amber'><b>Under Review</b> &middot; " + esc(c.reason) + (c.flagged ? " &middot; flagged " + safeFmtD(c.flagged) : "") + (isAdmin() ? "" : ". Waiting for an administrator's decision.") + "</div></div>";
   if (c.status == "Terminated") extra = "<div class='cd-note'><div class='warn red'><b>Terminated</b>" + (c.termDate ? " on " + safeFmtD(c.termDate) : "") + " &middot; " + esc(c.termReason || "Non-Payment") + "</div></div>";
   if (c.status == "Grace Period") extra = "<div class='cd-note'><div class='warn amber'><b>Grace period</b>" + (c.graceEnd ? " ends " + safeFmtD(c.graceEnd) : "") + " (" + c.graceLeft + " day" + (c.graceLeft == 1 ? "" : "s") + " left)</div></div>";
-  modal2("<div class='cd-hero'><span class='avatar'>" + initials(c.name) + "</span><div><h2>" + esc(c.name) + "</h2><small>Account " + c.no + " &middot; " + esc(c.branch) + " Branch</small><div style='margin-top:8px'>" + badgeFor(c.status) + "</div></div><button class='x dlg-x' style='background:none;border:0;color:#fff;font-size:28px;cursor:pointer' onclick='closeModal()'>&times;</button></div>" +
+  modal2("<div class='cd-hero'><span class='avatar'>" + initials(c.name) + "</span><div><h2>" + esc(c.name) + "</h2><small>Account " + c.no + " &middot; " + esc(c.branch) + " Branch</small><div style='margin-top:8px'>" + badgeFor(c.status) + "</div></div>" +
+    (isAdmin() ? "<button class='btn btn-light' onclick='editClient(\"" + c.no + "\")'>Edit Client</button>" : "") +
+    "<button class='x dlg-x' style='background:none;border:0;color:#fff;font-size:28px;cursor:pointer' onclick='closeModal()'>&times;</button></div>" +
     "<div class='cd-stats'><div class='cd-stat'><small>Plan</small><b>" + esc(c.plan.replace(/\s*Mbps/, " Mbps")) + "</b></div><div class='cd-stat'><small>Monthly rate</small><b>" + peso(c.rate) + "</b></div><div class='cd-stat'><small>Payment status</small><b>" + esc(c.pay || "Paid") + "</b></div><div class='cd-stat'><small>Balance</small><b>" + peso(c.balance || 0) + "</b></div></div>" + (extra ? "<div style='height:14px'></div>" + extra : "") +
     "<div class='cd-grid'><div class='cd-sec'><h4>Records</h4>" + kv("Branch", esc(c.branch) + " Branch") + kv("Plan", "FiberTec " + esc(c.plan)) + kv("Installed date", safeFmtD(c.installed)) + kv("Monthly rate", peso(c.rate)) + kv("Payment due date", "Every " + ordinal(c.due || 15)) + "</div>" +
     "<div class='cd-sec'><h4>Address and contact</h4>" + kv("Address", esc(c.address || "—")) + kv("Contact no.", esc(c.contact || "—")) + kv("Email", esc(c.email || "—")) + kv("FB / Messenger", esc(c.fb || "—")) + "</div>" +
     "<div class='cd-sec'><h4>Current statement</h4>" + kv("Invoice no.", esc(s.inv)) + kv("Billing date", safeFmtD(s.bill)) + kv("Due date", safeFmtD(s.due)) + kv("Paid / due", peso(s.paid) + " / " + peso(s.amount)) + "</div>" +
-    "<div class='cd-sec'><h4>Connection device location</h4><p style='margin:6px 0 0'>" + esc(c.device || "Standard indoor ONT placement") + "</p></div></div>" +
-    (isAdmin() ? "" : "<div class='cd-note' style='padding-bottom:18px'><div class='view-only' style='margin:0'>View only. Only administrators can terminate or reactivate accounts.</div></div>"), "");
+    "<div class='cd-sec'><h4>Connection device location</h4><p style='margin:6px 0 0'>" + esc(deviceLocation) + "</p></div></div>" +
+    (isAdmin() ? "" : "<div class='cd-note' style='padding-bottom:18px'><div class='view-only' style='margin:0'>Staff can submit cancellation requests for Admin approval. Only Administrators can directly terminate or reactivate accounts.</div></div>"), "");
 }
 
 /* ---------- Admin actions (Live Neon DB API) ---------- */
 function denyIfNotAdmin() { if (isAdmin()) return false; toast("Permission denied: only administrators can do this.", "error"); return true; }
+
+function editClient(no) {
+  if (denyIfNotAdmin()) return;
+  var c = findClientRecord(no);
+  if (!c) { toast("Client record not found.", "error"); return; }
+  var plans = PLANS.map(function (p, i) {
+    var id = i + 1;
+    return "<option value='" + id + "'" + (id == (c.plan_id || planIdForName(c.plan)) ? " selected" : "") + ">" + esc(p.n) + "</option>";
+  }).join("");
+  modal2("<div class='dlg-head'>Edit Client<button class='x' onclick='closeModal()'>&times;</button></div><div class='dlg-body'>" +
+    "<label>Full name</label><input id='e-name' maxlength='100' value='" + esc(c.name) + "'>" +
+    "<label>Address</label><input id='e-address' maxlength='255' value='" + esc(c.address || "") + "'>" +
+    "<div class='two'><div><label>Mobile no.</label><input id='e-contact' maxlength='15' value='" + esc(c.contact || "") + "'></div>" +
+    "<div><label>Client Email</label><input id='e-email' type='email' maxlength='100' value='" + esc(c.email || "") + "'></div></div>" +
+    "<div class='two'><div><label>Internet Plan</label><select id='e-plan'>" + plans + "</select></div>" +
+    "<div><label>FB / Messenger (optional)</label><input id='e-facebook' maxlength='100' value='" + esc(c.fb || "") + "'></div></div>" +
+    "<label>Connection device location (optional)</label><input id='e-device' maxlength='150' value='" + esc(c.device || "") + "'>" +
+    "<p class='error' id='e-error'></p><div class='dlg-foot'><button class='btn btn-light' onclick='closeModal()'>Cancel</button>" +
+    "<button class='btn' onclick='saveClientEdit(\"" + c.no + "\")'>Save Changes</button></div></div>");
+}
+
+async function saveClientEdit(no) {
+  var name = $("e-name").value.trim();
+  var address = $("e-address").value.trim();
+  var contactNo = $("e-contact").value.trim();
+  var email = $("e-email").value.trim().toLowerCase();
+  var facebook = $("e-facebook").value.trim();
+  var routerLocation = $("e-device").value.trim();
+  var planId = Number($("e-plan").value);
+  var err = $("e-error");
+  err.innerHTML = "";
+
+  if (!name || !address || !contactNo || !email) {
+    err.innerHTML = "Please complete the client name, address, contact number, and email.";
+    return;
+  }
+  if (!/^09[0-9]{9}$/.test(contactNo)) {
+    err.innerHTML = "Mobile no. must be 11 digits starting with 09.";
+    return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    err.innerHTML = "Please enter a valid email address.";
+    return;
+  }
+
+  try {
+    await adminApi("/clients/" + encodeURIComponent(no), {
+      method: "PATCH",
+      body: JSON.stringify({ name: name, address: address, contactNo: contactNo, email: email, planId: planId, facebook: facebook, routerLocation: routerLocation })
+    });
+  } catch (e) {
+    err.innerHTML = esc(e.message || "Could not update client details.");
+    return;
+  }
+
+  closeModal();
+  try {
+    await syncAdminData();
+  } catch (e) {
+    renderClients();
+    toast("Client details were saved, but the refreshed record could not be loaded: " + e.message, "error");
+    return;
+  }
+  renderClients();
+  viewClient(no);
+  toast("Client details updated.");
+}
 
 function reviewClient(no) {
   if (denyIfNotAdmin()) return;
@@ -509,7 +587,8 @@ function openRegister() {
       "<div><label>Branch</label><select id='r-branch'>" + opts + "</select></div>" +
       "<div><label>Plan</label><select id='r-plan'>" + PLANS.map(function (p) { return "<option value='" + p.n + "'>" + p.n + " (" + peso(p.r) + "/mo)</option>"; }).join("") + "</select></div>" +
     "</div>" +
-    "<label>Device location</label><input type='text' id='r-device' placeholder='e.g. Router on the shelf next to the front door'>" +
+    "<label>FB / Messenger (optional)</label><input type='text' id='r-facebook' maxlength='100'>" +
+    "<label>Device location</label><input type='text' id='r-device' maxlength='150' placeholder='e.g. Router on the shelf next to the front door'>" +
     "<p class='muted' style='margin-top:6px'>Account No. is generated automatically: Branch Code + Year + 4-digit Client ID. The client will sign in using this email or Account No. and password.</p>" +
     "<p class='error' id='r-err'></p>" +
     "<div class='dlg-foot'><button type='button' class='btn btn-light' onclick='closeModal()'>Cancel</button><button type='button' id='r-submit' class='btn' onclick='saveClient()'>Register Client</button></div></div>");
@@ -552,6 +631,7 @@ async function saveClient() {
       password: pass,
       address: addr,
       planId: planIdForName(planName),
+      facebook: v("r-facebook"),
       routerLocation: device,
       registeredDate: regDate
     });

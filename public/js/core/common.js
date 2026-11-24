@@ -48,7 +48,8 @@ function goPortal(d) {
   } else location.href = "admin.html";
 }
 function login() {
-  var id = val("account").trim(), pw = val("password"), err = $("error");
+  var id = val("account"), pw = val("password"), err = $("error");
+  if (id !== id.trim()) { err.innerHTML = "Account number, email, or username must not have leading or trailing spaces."; return; }
   if (!id) { err.innerHTML = "Please enter your account number, email, or username."; return; }
   if (!pw) { err.innerHTML = "Please enter your password."; return; }
   err.innerHTML = "";

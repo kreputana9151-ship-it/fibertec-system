@@ -62,7 +62,7 @@ function refreshPayments() {
     apiCall("GET", "/api/staff/payments").then(function (d) { PAY.records = d.filter(function (r) { return r.status != "Pending"; }); }),
     apiCall("GET", "/api/staff/activity").then(function (d) { PAY.activity = d; }),
     apiCall("GET", "/api/staff/cancellations").then(function (rows) {
-      STAFF_REQUESTS = rows.map(function (r) {
+      STAFF_REQUESTS = rows.filter(function (r) { return r.status === "Pending"; }).map(function (r) {
         return { id: r.request_id, acc: r.account_no, name: r.name, date: r.request_date, reason: r.reason, status: r.status };
       });
     }),
