@@ -5,14 +5,13 @@
 var APP_TODAY = "2026-10-24";               // demo "today" (Juan's statement is due today)
 var STATE_KEY = "fibertec.demo.v3";
 var MONTHS = [{ k: "2026-10", l: "October 2026" }, { k: "2026-09", l: "September 2026" }, { k: "2026-08", l: "August 2026" }, { k: "2026-07", l: "July 2026" }];
-var BRANCHES = [   // counts = [Active, Grace Period, Under Review, Terminated]  (uneven on purpose, 100 clients in total)
+var BRANCHES = [   // counts = [Active, Grace Period, Under Review, Terminated]
   { name: "Bagong Ilog", code: "01", short: "BI", brgy: "Bagong Ilog", counts: [14, 3, 2, 3] },
   { name: "Caniogan", code: "02", short: "CN", brgy: "Caniogan", counts: [5, 1, 1, 1] },
   { name: "Palatiw", code: "03", short: "PT", brgy: "Palatiw", counts: [9, 3, 3, 2] },
-  { name: "Bliss 3", code: "04", short: "B3", brgy: "Maybunga", counts: [11, 3, 2, 2] },
-  { name: "Bliss 1", code: "05", short: "B1", brgy: "San Nicolas", counts: [12, 3, 2, 2] },
+  { name: "Maybunga Bliss 3", code: "04", short: "B3", brgy: "Maybunga", counts: [15, 4, 2, 2] },
+  { name: "Maybunga Bliss 1", code: "05", short: "B1", brgy: "Maybunga", counts: [12, 3, 2, 2] },
   { name: "Nagpayong", code: "06", short: "NP", brgy: "Nagpayong", counts: [7, 1, 1, 2] },
-  { name: "Maybunga", code: "07", short: "MB", brgy: "Maybunga", counts: [4, 1, 0, 0] }
 ];
 var STATUSES = ["Active", "Grace Period", "Under Review", "Terminated"];
 var PLANS = [{ n: "LiteSpeed 50Mbps", r: 799, w: .26 }, { n: "Turbo 110 Mbps", r: 999, w: .42 }, { n: "Elite 150 Mbps", r: 1299, w: .20 }, { n: "Premium 220 Mbps", r: 1450, w: .12 }];
@@ -71,17 +70,17 @@ var BASE_CLIENTS = [], BASE_RECORDS = [], BASE_REQUESTS = [];
   var used = {}, seq = 0;
   /* a few fixed, recognisable demo accounts (kept from the original prototype) */
   var fixed = [
-    { name: "Juan Dela Cruz", b: "Bliss 1", s: "Active", plan: 2, due: 24, pay: "Unpaid", installed: "2026-06-24", email: "useraccount@gmail.com", contact: "09171234567", bill: "Delivered", idn: 1001, addr: "Unit 4B, Building 7, Bliss 1, Caruncho Avenue, Barangay San Nicolas, Pasig City" },
+    { name: "Juan Dela Cruz", b: "Maybunga Bliss 1", s: "Active", plan: 2, due: 24, pay: "Unpaid", installed: "2026-06-24", email: "useraccount@gmail.com", contact: "09171234567", bill: "Delivered", idn: 1001, addr: "Unit 4B, Building 7, Maybunga Bliss 1, Maybunga, Pasig City" },
     { name: "Cholo Trinidad", b: "Nagpayong", s: "Active", plan: 1, due: 3, pay: "Paid", bill: "Delivered", email: "cholo@gmail.com", contact: "09175550333" },
     { name: "Keziah Harriette Reputana", b: "Bagong Ilog", s: "Grace Period", plan: 3, due: 21, pay: "Unpaid", bill: "Failed", email: "reputana@gmail.com", contact: "09937162786" },
     { name: "Danee Anne Arquero", b: "Bagong Ilog", s: "Active", plan: 0, due: 30, pay: "Paid", email: "arquero@gmail.com", contact: "09937267892" },
-    { name: "Iris Mie Yadao", b: "Maybunga", s: "Active", plan: 1, due: 25, pay: "Partially paid", email: "yadao@gmail.com", contact: "09422298771" },
+    { name: "Iris Mie Yadao", b: "Maybunga Bliss 3", s: "Active", plan: 1, due: 25, pay: "Partially paid", email: "yadao@gmail.com", contact: "09422298771" },
     { name: "Elaisa Nicole Bartolome", b: "Palatiw", s: "Terminated", plan: 2, due: 20, pay: "Unpaid", email: "Barts@gmail.com", contact: "09454478949" },
     { name: "Iris Anne Reputana", b: "Palatiw", s: "Under Review", plan: 1, due: 23, pay: "Unpaid", reason: "Non-payment", email: "anne@gmail.com", contact: "09488763422" },
-    { name: "Maria Santos", b: "Bliss 1", s: "Active", plan: 0, due: 12, pay: "Paid", email: "maria@gmail.com", contact: "09175550102" },
-    { name: "Pedro Reyes", b: "Bliss 1", s: "Grace Period", plan: 1, due: 20, pay: "Unpaid", email: "pedro@gmail.com", contact: "09175550211" },
-    { name: "Lara Mendoza", b: "Bliss 1", s: "Under Review", plan: 2, due: 15, pay: "Unpaid", reason: "Client Cancellation Request", email: "lara@gmail.com", contact: "09175550390" },
-    { name: "Rico Aquino", b: "Bliss 1", s: "Terminated", plan: 3, due: 10, pay: "Pending", email: "rico@gmail.com", contact: "09175550155" }
+    { name: "Maria Santos", b: "Maybunga Bliss 1", s: "Active", plan: 0, due: 12, pay: "Paid", email: "maria@gmail.com", contact: "09175550102" },
+    { name: "Pedro Reyes", b: "Maybunga Bliss 1", s: "Grace Period", plan: 1, due: 20, pay: "Unpaid", email: "pedro@gmail.com", contact: "09175550211" },
+    { name: "Lara Mendoza", b: "Maybunga Bliss 1", s: "Under Review", plan: 2, due: 15, pay: "Unpaid", reason: "Client Cancellation Request", email: "lara@gmail.com", contact: "09175550390" },
+    { name: "Rico Aquino", b: "Maybunga Bliss 1", s: "Terminated", plan: 3, due: 10, pay: "Pending", email: "rico@gmail.com", contact: "09175550155" }
   ];
   function randName() { var n; do { n = pick(FIRST) + (rnd() < .45 ? " " + pick(MID) : "") + " " + pick(LAST); } while (used[n]); used[n] = 1; return n; }
   function weightedPlan() { var r = rnd(), a = 0; for (var i = 0; i < PLANS.length; i++) { a += PLANS[i].w; if (r < a) return i; } return 1; }
