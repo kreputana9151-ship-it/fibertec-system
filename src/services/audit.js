@@ -1,3 +1,5 @@
+const { loadAccountSummary } = require('./accountSummary');
+
 // one place to write activity_log + account_status_log + notices
 async function logActivity(c, userId, branchCode, description) {
   await c.query(
@@ -10,6 +12,15 @@ async function changeStatus(c, accountNo, newStatus, reason, userId, extra = {})
   const { rows } = await c.query('SELECT status FROM clients WHERE account_no=$1 FOR UPDATE', [accountNo]);
   if (!rows.length) throw new Error('Client not found');
   const old = rows[0].status;
+  if (newStatus === 'Active') {
+    const summary = await loadAccountSummary(c, accountNo);
+    if (summary && Number(summary.previous_balance) > 0) {
+      throw Object.assign(
+        new Error('Cannot reactivate this account while previous-month arrears remain.'),
+        { status: 409 }
+      );
+    }
+  }
   const savedReason = newStatus === 'Under Review'
     ? (String(reason || '').trim() || 'Flagged for account review')
     : reason;
@@ -35,14 +46,10 @@ async function changeStatus(c, accountNo, newStatus, reason, userId, extra = {})
        termination_date=COALESCE($6::date, CASE WHEN $2::varchar(15)='Terminated' THEN (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date END),
        termination_reason=$7::varchar(60),
        current_balance=COALESCE((
-         SELECT SUM(GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0))
+         SELECT SUM(GREATEST(s.amount - COALESCE(s.amount_paid, 0), 0))
            FROM statements s
-           LEFT JOIN LATERAL (
-             SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
-               FROM payments p
-              WHERE p.statement_id=s.statement_id AND p.status='Verified'
-           ) v ON TRUE
           WHERE s.account_no=$1::char(8)
+            AND s.billing_month <= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date)::date
        ), 0)
      WHERE account_no=$1::char(8)`,
     [accountNo, newStatus, savedReason, extra.flagged || null, extra.graceEnd || null,

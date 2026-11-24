@@ -3,6 +3,7 @@ const bcrypt = require('bcrypt');
 const { requireAuth, requireRole, requirePasswordChangeComplete } = require('../middleware/auth');
 const { query } = require('../db');
 const { buildStatementPdf, loadStatement } = require('../services/statementPdf');
+const { ACCOUNT_SUMMARY_CTES } = require('../services/accountSummary');
 
 router.use(requireAuth, requireRole('client'), requirePasswordChangeComplete);
 const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
@@ -10,30 +11,23 @@ const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
 // GET /api/client/me  -> account overview (dates are sent as plain YYYY-MM-DD text, no time-zone shifting)
 router.get('/me', wrap(async (req, res) => {
   const { rows } = await query(
-    `SELECT c.account_no, c.name, c.email, c.contact_no, c.address, c.status,
-            COALESCE(latest.balance, 0) AS current_balance, latest.payment_status,
+    `WITH ${ACCOUNT_SUMMARY_CTES}
+     SELECT c.account_no, c.name, c.email, c.contact_no, c.address,
+            summary.effective_status AS status,
+            summary.total_balance AS current_balance,
+            summary.previous_balance, summary.current_month_due, summary.total_balance,
+            CASE WHEN summary.total_balance > 0 THEN 'Unpaid'
+                 ELSE COALESCE(summary.latest_payment_status, 'Unpaid') END AS payment_status,
             c.status_reason, c.router_location, c.due_day,
             c.registered_date::text AS registered_date, c.grace_end_date::text AS grace_end_date,
             c.installed_date::text AS installed_date,
             p.plan_name, p.monthly_rate, b.name AS branch,
-            EXISTS (SELECT 1 FROM payments y WHERE y.account_no = c.account_no AND y.status = 'Pending') AS has_pending,
+            summary.has_pending_payment AS has_pending,
+            TO_CHAR(summary.current_due_date, 'YYYY-MM-DD') AS current_due_date,
             (SELECT row_to_json(r) FROM (SELECT status, request_date::text AS request_date FROM cancellation_requests
               WHERE account_no = c.account_no ORDER BY request_id DESC LIMIT 1) r) AS cancel
        FROM clients c JOIN plans p USING (plan_id) JOIN branches b USING (branch_code)
-       LEFT JOIN LATERAL (
-         SELECT GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance,
-                CASE WHEN COALESCE(v.verified_paid, 0) >= s.amount THEN 'Paid'
-                     WHEN COALESCE(v.verified_paid, 0) > 0 THEN 'Partially paid'
-                     ELSE 'Unpaid' END AS payment_status
-           FROM statements s
-           LEFT JOIN LATERAL (
-             SELECT COALESCE(SUM(pm.amount), 0) AS verified_paid
-               FROM payments pm
-              WHERE pm.statement_id=s.statement_id AND pm.status='Verified'
-           ) v ON TRUE
-          WHERE s.account_no=c.account_no
-          ORDER BY s.billing_month DESC LIMIT 1
-       ) latest ON TRUE
+       JOIN account_summary summary USING (account_no)
       WHERE c.account_no = $1`, [req.user.accountNo]);
   res.json(rows[0]);
 }));
@@ -41,19 +35,18 @@ router.get('/me', wrap(async (req, res) => {
 // Statement and payment views retain the full account history.
 router.get('/statements', wrap(async (req, res) => {
   const { rows } = await query(
-    `SELECT s.statement_id, s.invoice_no, s.billing_month::text, s.issued_date::text, s.due_date::text, s.amount,
+    `WITH ${ACCOUNT_SUMMARY_CTES}
+     SELECT s.statement_id, s.invoice_no, s.billing_month::text, s.issued_date::text, s.due_date::text, s.amount,
             s.payment_status AS stored_payment_status,
-            COALESCE(v.verified_paid, 0) AS amount_paid,
-            GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance,
-            CASE WHEN COALESCE(v.verified_paid, 0) >= s.amount THEN 'Paid'
-                 WHEN COALESCE(v.verified_paid, 0) > 0 THEN 'Partially paid'
+            COALESCE(statement_paid.verified_paid, 0) AS amount_paid,
+            GREATEST(s.amount - COALESCE(statement_paid.verified_paid, 0), 0) AS balance,
+            summary.previous_balance, summary.current_month_due, summary.total_balance,
+            CASE WHEN COALESCE(statement_paid.verified_paid, 0) >= s.amount THEN 'Paid'
+                 WHEN COALESCE(statement_paid.verified_paid, 0) > 0 THEN 'Partially paid'
                  ELSE 'Unpaid' END AS payment_status
        FROM v_client_statements s
-       LEFT JOIN LATERAL (
-         SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
-           FROM payments p
-          WHERE p.statement_id=s.statement_id AND p.status='Verified'
-       ) v ON TRUE
+       JOIN account_summary summary USING (account_no)
+       LEFT JOIN summary_payment_totals statement_paid ON statement_paid.statement_id=s.statement_id
       WHERE s.account_no=$1 ORDER BY s.billing_month DESC`, [req.user.accountNo]);
   res.json(rows);
 }));
@@ -134,15 +127,15 @@ router.post('/payments', wrap(async (req, res) => {
   }
 
   const s = (await query(
-    `    SELECT s.*, c.status AS client_status, COALESCE(v.verified_paid, 0) AS verified_paid,
+    `WITH ${ACCOUNT_SUMMARY_CTES}
+     SELECT s.*, summary.effective_status AS client_status,
+            summary.previous_balance, summary.current_month_due, summary.total_balance,
+            COALESCE(paid.verified_paid, 0) AS verified_paid,
             s.due_date < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date AS is_past_due,
-            GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS remaining_balance
+            GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) AS remaining_balance
        FROM statements s JOIN clients c USING (account_no)
-       LEFT JOIN LATERAL (
-         SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
-           FROM payments p
-          WHERE p.statement_id=s.statement_id AND p.status='Verified'
-       ) v ON TRUE
+       JOIN account_summary summary USING (account_no)
+       LEFT JOIN summary_payment_totals paid ON paid.statement_id=s.statement_id
       WHERE s.statement_id=$1 AND s.account_no=$2`, [statementId, req.user.accountNo])).rows[0];
   if (!s) return res.status(404).json({ error: 'Statement not found' });
   const remainingBalance = Number(s.remaining_balance);

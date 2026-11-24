@@ -5,6 +5,7 @@ const { query, tx } = require('../db');
 const { applyVerifiedPayment, createInitialStatement } = require('../services/billing');
 const { changeStatus, logActivity, addNotice } = require('../services/audit');
 const { deliverPendingEmails } = require('../services/notify');
+const { ACCOUNT_SUMMARY_CTES } = require('../services/accountSummary');
 const { publicErrorMessage, publicErrorStatus } = require('../utils/publicError');
 const { installedDateError, manilaToday } = require('../utils/businessDate');
 
@@ -16,17 +17,20 @@ router.get('/clients', async (req, res) => {
   try {
     const q = `%${req.query.q || ''}%`;
     const { rows } = await query(
-      `SELECT c.account_no, c.name, c.contact_no, c.email, c.address, c.status,
-              COALESCE(latest.balance, 0) AS current_balance,
-              COALESCE(latest.balance, 0) AS outstanding_balance,
-              CASE WHEN c.status='Terminated' AND latest.balance IS NOT NULL
-                   THEN CASE WHEN latest.balance > 0 THEN 'Unpaid' ELSE 'Paid' END
-                   ELSE latest.payment_status END AS payment_status,
-              COALESCE(latest.has_pending_payment, FALSE) AS has_pending_payment,
-              TO_CHAR(latest.due_date, 'YYYY-MM-DD') AS current_due_date,
-              CASE WHEN c.status='Under Review'
+      `WITH ${ACCOUNT_SUMMARY_CTES}
+       SELECT c.account_no, c.name, c.contact_no, c.email, c.address,
+              summary.effective_status AS status,
+              summary.total_balance AS current_balance,
+              summary.total_balance AS outstanding_balance,
+              summary.previous_balance, summary.current_month_due, summary.total_balance,
+              CASE WHEN summary.total_balance > 0 THEN 'Unpaid'
+                   ELSE COALESCE(summary.latest_payment_status, 'Unpaid') END AS payment_status,
+              summary.has_pending_payment,
+              TO_CHAR(summary.current_due_date, 'YYYY-MM-DD') AS current_due_date,
+              CASE WHEN summary.previous_balance > 0 THEN 'Previous billing month arrears'
+                   WHEN summary.effective_status='Under Review'
                    THEN COALESCE(NULLIF(BTRIM(c.status_reason), ''),
-                     CASE WHEN COALESCE(latest.balance, c.current_balance, 0) > 0
+                     CASE WHEN summary.total_balance > 0
                           THEN 'Grace period ended' ELSE 'Flagged for account review' END)
                    ELSE c.status_reason END AS status_reason,
               c.facebook, c.router_location,
@@ -37,41 +41,14 @@ router.get('/clients', async (req, res) => {
               TO_CHAR(c.registered_date, 'YYYY-MM') AS created_month,
               TO_CHAR(c.termination_date, 'YYYY-MM') AS terminated_month,
               c.termination_reason,
-              CASE WHEN c.status='Under Review'
-                   THEN TO_CHAR(COALESCE(c.flagged_date, overdue.due_date,
+              CASE WHEN summary.effective_status='Under Review'
+                   THEN TO_CHAR(COALESCE(c.flagged_date, summary.overdue_due_date,
                      (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date), 'YYYY-MM-DD')
                    ELSE TO_CHAR(c.flagged_date, 'YYYY-MM-DD') END AS flagged_date,
-              TO_CHAR(overdue.due_date, 'YYYY-MM-DD') AS overdue_due_date,
+              TO_CHAR(summary.overdue_due_date, 'YYYY-MM-DD') AS overdue_due_date,
               TO_CHAR(c.grace_end_date, 'YYYY-MM-DD') AS grace_end_date
          FROM clients c JOIN plans p USING (plan_id)
-         LEFT JOIN LATERAL (
-           SELECT s.due_date,
-                  GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) AS balance,
-                  CASE WHEN COALESCE(paid.verified_paid, 0) >= s.amount THEN 'Paid'
-                       WHEN COALESCE(paid.verified_paid, 0) > 0 THEN 'Partially paid'
-                       ELSE 'Unpaid' END AS payment_status,
-                  paid.has_pending_payment
-             FROM statements s
-             LEFT JOIN LATERAL (
-               SELECT COALESCE(SUM(pm.amount) FILTER (WHERE pm.status='Verified'), 0) AS verified_paid,
-                      COALESCE(BOOL_OR(pm.status='Pending'), FALSE) AS has_pending_payment
-                 FROM payments pm WHERE pm.statement_id=s.statement_id
-             ) paid ON TRUE
-            WHERE s.account_no=c.account_no
-            ORDER BY s.billing_month DESC LIMIT 1
-         ) latest ON TRUE
-         LEFT JOIN LATERAL (
-           SELECT s.due_date
-             FROM statements s
-             LEFT JOIN LATERAL (
-               SELECT COALESCE(SUM(pm.amount) FILTER (WHERE pm.status='Verified'), 0) AS verified_paid
-                 FROM payments pm WHERE pm.statement_id=s.statement_id
-             ) paid ON TRUE
-            WHERE s.account_no=c.account_no
-              AND s.due_date <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date
-              AND GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) > 0
-            ORDER BY s.due_date DESC, s.billing_month DESC LIMIT 1
-         ) overdue ON TRUE
+         JOIN account_summary summary USING (account_no)
         WHERE c.branch_code=$1 AND (c.name ILIKE $2 OR c.account_no LIKE $2 OR c.email ILIKE $2)
         ORDER BY c.client_seq`,
       [req.user.branchCode, q]
@@ -87,20 +64,19 @@ router.get('/clients', async (req, res) => {
 router.get('/dashboard', async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT COUNT(*) FILTER (WHERE status='Active')::int AS active,
-              COUNT(*) FILTER (WHERE status='Grace Period')::int AS grace_period,
-              COUNT(*) FILTER (WHERE status='Under Review')::int AS under_review,
-              COUNT(*) FILTER (WHERE status='Terminated')::int AS terminated,
+      `SELECT COUNT(*) FILTER (WHERE c.status='Active')::int AS active,
+             COUNT(*) FILTER (WHERE c.status='Grace Period')::int AS grace_period,
+             COUNT(*) FILTER (WHERE c.status='Under Review')::int AS under_review,
+             COUNT(*) FILTER (WHERE c.status='Terminated')::int AS terminated,
               COALESCE((
                 SELECT SUM(p.amount)
-                  FROM payments p
-                  JOIN clients c USING (account_no)
-                 WHERE c.branch_code=$1 AND p.status='Verified'
+                 FROM payments p JOIN clients payment_client USING (account_no)
+                WHERE payment_client.branch_code=$1 AND p.status='Verified'
                     AND TO_CHAR(COALESCE(p.verified_at AT TIME ZONE 'Asia/Manila', p.payment_date::timestamp), 'YYYY-MM') =
                        TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila', 'YYYY-MM')
               ), 0) AS collected_this_month
-         FROM clients
-        WHERE branch_code=$1`,
+         FROM clients c
+        WHERE c.branch_code=$1`,
       [req.user.branchCode]
     );
     res.json(rows[0]);
@@ -113,8 +89,13 @@ router.get('/dashboard', async (req, res) => {
 // GET /api/staff/clients.csv  (Export CSV)
 router.get('/clients.csv', async (req, res) => {
   const { rows } = await query(
-    `SELECT c.account_no, c.name, c.contact_no, c.email, p.plan_name, c.status
-       FROM clients c JOIN plans p USING (plan_id) WHERE c.branch_code=$1 ORDER BY c.client_seq`,
+    `WITH ${ACCOUNT_SUMMARY_CTES}
+     SELECT c.account_no, c.name, c.contact_no, c.email, p.plan_name,
+            summary.effective_status AS status, summary.total_balance
+       FROM clients c
+       JOIN plans p USING (plan_id)
+       JOIN account_summary summary USING (account_no)
+      WHERE c.branch_code=$1 ORDER BY c.client_seq`,
     [req.user.branchCode]
   );
   const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -264,18 +245,19 @@ async function assertHead(c, branchCode, id) {
 router.get('/payments/queue', async (req, res) => {
   const bc = req.user.branchCode;
   const q = (await query(
-    `SELECT ROW_NUMBER() OVER (${FIFO_ORDER}) AS queue_no, p.payment_id, p.account_no, c.name, p.amount, p.payment_type, p.method,
-            s.amount AS statement_total, COALESCE(v.verified_paid, 0) AS verified_paid,
-            GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS remaining_balance,
-            p.amount > GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS exceeds_balance,
+    `WITH ${ACCOUNT_SUMMARY_CTES}
+     SELECT ROW_NUMBER() OVER (${FIFO_ORDER}) AS queue_no, p.payment_id, p.account_no, c.name,
+            summary.effective_status AS client_status,
+            summary.previous_balance, summary.current_month_due, summary.total_balance,
+            p.amount, p.payment_type, p.method,
+            s.amount AS statement_total, COALESCE(paid.verified_paid, 0) AS verified_paid,
+            GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) AS remaining_balance,
+            p.amount > GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) AS exceeds_balance,
             p.reference_no, p.created_at AS submitted_at, EXTRACT(EPOCH FROM (now() - p.created_at))::int AS waiting_seconds
        FROM payments p JOIN clients c USING (account_no)
        JOIN statements s ON s.statement_id=p.statement_id
-       LEFT JOIN LATERAL (
-         SELECT COALESCE(SUM(vp.amount), 0) AS verified_paid
-           FROM payments vp
-          WHERE vp.statement_id=p.statement_id AND vp.status='Verified'
-       ) v ON TRUE
+       JOIN account_summary summary USING (account_no)
+       LEFT JOIN summary_payment_totals paid ON paid.statement_id=s.statement_id
       WHERE c.branch_code=$1 AND p.status='Pending' ${FIFO_ORDER}`, [bc])).rows;
   const m = (await query(
     `WITH done AS (SELECT p.created_at, p.verified_at, LAG(p.verified_at) OVER (ORDER BY p.verified_at) AS prev_done
@@ -303,20 +285,20 @@ router.get('/payments/queue', async (req, res) => {
 // GET /api/staff/statements/open?q=
 router.get('/statements/open', async (req, res) => {
   const { rows } = await query(
-    `SELECT s.statement_id, s.account_no, c.name, c.status AS client_status, s.amount, s.payment_status AS stored_payment_status,
-            COALESCE(v.verified_paid, 0) AS amount_paid,
-            GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance,
-            CASE WHEN COALESCE(v.verified_paid, 0) >= s.amount THEN 'Paid'
-                 WHEN COALESCE(v.verified_paid, 0) > 0 THEN 'Partially paid'
+    `WITH ${ACCOUNT_SUMMARY_CTES}
+     SELECT s.statement_id, s.account_no, c.name, summary.effective_status AS client_status,
+            summary.previous_balance, summary.current_month_due, summary.total_balance,
+            s.amount, s.payment_status AS stored_payment_status,
+            COALESCE(paid.verified_paid, 0) AS amount_paid,
+            GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) AS balance,
+            CASE WHEN COALESCE(paid.verified_paid, 0) >= s.amount THEN 'Paid'
+                 WHEN COALESCE(paid.verified_paid, 0) > 0 THEN 'Partially paid'
                  ELSE 'Unpaid' END AS payment_status,
             s.due_date, pl.monthly_rate
        FROM statements s JOIN clients c USING (account_no) JOIN plans pl USING (plan_id)
-       LEFT JOIN LATERAL (
-         SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
-           FROM payments p
-          WHERE p.statement_id=s.statement_id AND p.status='Verified'
-       ) v ON TRUE
-      WHERE c.branch_code=$1 AND GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) > 0
+       JOIN account_summary summary USING (account_no)
+       LEFT JOIN summary_payment_totals paid ON paid.statement_id=s.statement_id
+      WHERE c.branch_code=$1 AND GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) > 0
         AND (c.name ILIKE $2 OR c.account_no LIKE $2)
       ORDER BY s.due_date, s.account_no LIMIT 20`, [req.user.branchCode, `%${req.query.q || ''}%`]);
   res.json(rows);
@@ -325,7 +307,11 @@ router.get('/statements/open', async (req, res) => {
 // GET /api/staff/payments?status=Pending
 router.get('/payments', async (req, res) => {
   const { rows } = await query(
-    `SELECT p.*, c.name FROM payments p JOIN clients c USING (account_no)
+    `WITH ${ACCOUNT_SUMMARY_CTES}
+     SELECT p.*, c.name, summary.effective_status AS client_status,
+            summary.previous_balance, summary.current_month_due, summary.total_balance
+       FROM payments p JOIN clients c USING (account_no)
+       JOIN account_summary summary USING (account_no)
       WHERE c.branch_code=$1 AND ($2::text IS NULL OR p.status=$2)
       ORDER BY CASE WHEN p.status='Pending' THEN p.created_at END ASC, p.created_at DESC LIMIT 500`, [req.user.branchCode, req.query.status || null]);
   res.json(rows);
@@ -337,15 +323,15 @@ router.post('/payments/cash', async (req, res) => {
   try {
     const out = await tx(async c => {
       const s = (await c.query(
-        `SELECT s.*, cl.status AS client_status, COALESCE(v.verified_paid, 0) AS verified_paid,
+        `WITH ${ACCOUNT_SUMMARY_CTES}
+         SELECT s.*, summary.effective_status AS client_status,
+                summary.previous_balance, summary.current_month_due, summary.total_balance,
+                COALESCE(paid.verified_paid, 0) AS verified_paid,
                 s.due_date < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date AS is_past_due,
-                GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS remaining_balance
+                GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) AS remaining_balance
            FROM statements s JOIN clients cl USING (account_no)
-           LEFT JOIN LATERAL (
-             SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
-               FROM payments p
-              WHERE p.statement_id=s.statement_id AND p.status='Verified'
-           ) v ON TRUE
+           JOIN account_summary summary USING (account_no)
+           LEFT JOIN summary_payment_totals paid ON paid.statement_id=s.statement_id
           WHERE s.statement_id=$1 AND cl.branch_code=$2
           FOR UPDATE OF s`, [statementId, req.user.branchCode])).rows[0];
       if (!s) throw new Error('Statement not found in your branch.');

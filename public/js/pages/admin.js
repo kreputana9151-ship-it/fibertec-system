@@ -119,6 +119,9 @@ async function syncAdminData() {
       router_location: c.router_location || "",
       current_balance: Number(c.current_balance || 0),
       outstanding_balance: Number(c.outstanding_balance || 0),
+      previous_balance: Number(c.previous_balance || 0),
+      current_month_due: Number(c.current_month_due || 0),
+      total_balance: Number(c.total_balance || c.current_balance || 0),
       payment_status: c.payment_status || "—",
       has_pending_payment: !!c.has_pending_payment,
       current_due_date: c.current_due_date || "",
@@ -276,7 +279,7 @@ function branchScope(id) {
 }
 
 /* ---------- Dashboard ---------- */
-async function renderDash(isLivePoll) {
+async function renderDash(isLivePoll, preloadedData) {
   var request = ++DASH_REQUEST, b = val("d-branch"), m = val("d-month");
   if (!isLivePoll) {
     ["d-stats", "branch-bars", "status-legend", "recent-pay"].forEach(function (id) { $(id).innerHTML = ""; });
@@ -291,7 +294,7 @@ async function renderDash(isLivePoll) {
     }, 3000);
   }
   try {
-    var data = await adminApi("/dashboard" + periodQuery(m, b));
+    var data = preloadedData || await adminApi("/dashboard" + periodQuery(m, b));
     if (request !== DASH_REQUEST || (isLivePoll && liveRefreshPaused())) return false;
     var branches = data.branches || [], names = branches.map(function (x) { return x.branch; });
     var cnt = { Active: 0, "Grace Period": 0, "Under Review": 0, Terminated: 0 };
@@ -754,7 +757,7 @@ function renderMarkovCard(m, branchFilter) {
 
 /* ---------- Branch analytics ---------- */
 async function renderAnalytics(isLivePoll) {
-  var request = ++ANALYTICS_REQUEST, b = val("a-branch"), m = val("a-month"), cl = liveClients(b);
+  var request = ++ANALYTICS_REQUEST, b = val("a-branch"), m = val("a-month");
   if (!isLivePoll) {
     ["an-stats", "plan-legend", "anova", "markov"].forEach(function (id) { $(id).innerHTML = ""; });
     ["an-chart", "reg-chart", "churn-chart"].forEach(function (id) { $(id).innerHTML = ""; });
@@ -787,21 +790,22 @@ async function renderAnalytics(isLivePoll) {
       extra: function (i) { return "Collection rate: <b>" + pct(co[i], bl[i]) + "%</b>"; }
     });
 
-  var planNames = [];
-  cl.forEach(function (c) { if (c.plan && planNames.indexOf(c.plan) < 0) planNames.push(c.plan); });
-  if (!planNames.length) planNames = ["LiteSpeed 50Mbps", "Turbo 110 Mbps", "Elite 150 Mbps", "Premium 220 Mbps"];
+  var planRows = data.plan_distribution || [];
+  var planNames = planRows.map(function (row) { return row.plan; });
   var cols = ["#1b7a8a", "#0d4f7a", "#f5a623", "#8fb8d0"];
-  var pv = planNames.map(function (pn) { return cl.filter(function (c) { return c.plan === pn; }).length; });
+  var pv = planRows.map(function (row) { return Number(row.count); });
+  var planTotal = pv.reduce(function (total, count) { return total + count; }, 0);
   var lg = "";
   planNames.forEach(function (pn, i) {
-    lg += "<p><i style='background:" + cols[i % cols.length] + "'></i>" + esc(pn) + "<span>" + pv[i] + " (" + pct(pv[i], cl.length) + "%)</span></p>";
+    lg += "<p><i style='background:" + cols[i % cols.length] + "'></i>" + esc(pn) + "<span>" + pv[i] + " (" + pct(pv[i], planTotal) + "%)</span></p>";
   });
-  setDonut("plan-donut", pv, cols);
-  $("plan-n").innerHTML = cl.length + "<small>clients</small>";
-  $("plan-legend").innerHTML = lg + "<p class='total'>Total<span>" + cl.length + "</span></p>";
+  setDonut("plan-donut", pv.length ? pv : [0], pv.length ? cols : [cols[0]]);
+  $("plan-n").innerHTML = planTotal + "<small>clients</small>";
+  $("plan-legend").innerHTML = (lg || "<p class='muted'>No clients found for this period.</p>") +
+    "<p class='total'>Total<span>" + planTotal + "</span></p>";
 
   var reg = branches.map(function (x) { return Number(x.registrations); });
-  var churn = branches.map(function (x) { return pct(Number(x.cancellations), Number(x.clients)); });
+  var churn = branches.map(function (x) { return pct(Number(x.cancellations), Number(x.period_clients)); });
   barChart({
     id: "reg-chart",
     labels: names,
@@ -970,17 +974,22 @@ function expandCard(btn) {
 
 /* ---------- start ---------- */
 async function startAdmin() {
+  var currentMonth = manilaMonthKey();
+  var initialDashboardData;
   try {
-    await syncAdminData();
+    var initialResults = await Promise.all([
+      syncAdminData(),
+      adminApi("/dashboard?month=" + encodeURIComponent(currentMonth))
+    ]);
+    initialDashboardData = initialResults[1];
   } catch (e) {
     toast("Failed to load live database records: " + e.message);
   }
   updatePasswordResetBadge();
   var br = branchScope("");
   ["d-branch", "b-branch", "p-branch", "a-branch", "n-branch"].forEach(function (id) { fillSelect(id, "All Branches", br); });
-  var curYm = manilaMonthKey();
   populateMonthFilters(true);
-  ["d-month", "b-month", "a-month"].forEach(function (id) { $(id).value = curYm; });
+  ["d-month", "b-month", "a-month"].forEach(function (id) { $(id).value = currentMonth; });
   $("p-month").value = "";
   fillSelect("b-status", "All Status", ["Delivered", "Not Yet Sent", "Failed"]);
   fillSelect("p-method", "All Methods", ["GCash", "Cash"]);
@@ -988,7 +997,7 @@ async function startAdmin() {
   fillSelect("n-type", "All Notice Types", ["7-Day Billing Notice", "Disconnection Warning", "Payment Receipt", "System Notice"]);
   fillSelect("n-status", "All Status", ["Sent", "Not Yet Sent", "Failed"]);
   if (typeof initClientsView === "function") initClientsView();
-  renderDash();
+  renderDash(false, initialDashboardData);
   ADMIN_RENDERED_SIGNATURE = adminDataSignature();
   setInterval(async function () {
     if (ADMIN_POLL_RUNNING || liveRefreshPaused()) return;

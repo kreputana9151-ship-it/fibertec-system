@@ -6,6 +6,7 @@ const { query, tx } = require('../db');
 const { sendStatement, generateStatementsForToday, runStatusEngine } = require('../services/billing');
 const { changeStatus, logActivity } = require('../services/audit');
 const { sendEmail } = require('../services/mailer');
+const { ACCOUNT_SUMMARY_CTES } = require('../services/accountSummary');
 const { publicErrorMessage, publicErrorStatus } = require('../utils/publicError');
 const { installedDateError } = require('../utils/businessDate');
 
@@ -45,30 +46,59 @@ async function setTemporaryClientPassword(c, accountNo) {
 }
 
 const periodAnalyticsSql = `
-  WITH branch_scope AS (
+  WITH ${ACCOUNT_SUMMARY_CTES},
+  selected_period AS (
+    SELECT COALESCE(
+             TO_DATE($1, 'YYYY-MM'),
+             date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date)::date
+           ) AS month_start,
+           (COALESCE(
+             TO_DATE($1, 'YYYY-MM'),
+             date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date)::date
+           ) + INTERVAL '1 month - 1 day')::date AS month_end
+  ),
+  branch_scope AS (
     SELECT branch_code, name FROM branches
      WHERE ($2::text IS NULL OR branch_code=$2)
+  ),
+  period_population AS (
+    SELECT c.account_no, c.branch_code, c.plan_id, summary.effective_status
+      FROM clients c
+      JOIN branch_scope b USING (branch_code)
+      JOIN account_summary summary USING (account_no)
+      CROSS JOIN selected_period period
+     WHERE c.installed_date <= period.month_end
+       AND (c.status <> 'Terminated' OR c.termination_date IS NULL
+            OR c.termination_date >= period.month_start)
   ),
   client_totals AS (
     SELECT c.branch_code, COUNT(*)::int AS client_count,
            COUNT(*) FILTER (WHERE c.status='Active')::int AS active_count
-      FROM clients c JOIN branch_scope b USING (branch_code)
+      FROM clients c
+      JOIN branch_scope b USING (branch_code)
      GROUP BY c.branch_code
+  ),
+  period_client_totals AS (
+    SELECT population.branch_code, COUNT(*)::int AS client_count
+      FROM period_population population
+     GROUP BY population.branch_code
+  ),
+  plan_totals AS (
+    SELECT p.plan_name, COUNT(*)::int AS client_count
+      FROM period_population population
+      JOIN plans p USING (plan_id)
+     GROUP BY p.plan_name
   ),
   statement_totals AS (
     SELECT c.branch_code, COALESCE(SUM(s.amount),0) AS billed,
-           COALESCE(SUM(paid.verified_paid),0) AS collected,
+           COALESCE(SUM(paid.verified_paid) FILTER (WHERE s.statement_id IS NOT NULL),0) AS collected,
            COUNT(s.statement_id)::int AS statement_count,
            COUNT(*) FILTER (WHERE s.send_status='Delivered')::int AS delivered_count
       FROM branch_scope b
       LEFT JOIN clients c USING (branch_code)
       LEFT JOIN statements s ON s.account_no=c.account_no
         AND ($1::text IS NULL OR TO_CHAR(s.billing_month, 'YYYY-MM')=$1)
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
-          FROM payments p
-         WHERE p.statement_id=s.statement_id AND p.status='Verified'
-      ) paid ON TRUE
+      LEFT JOIN summary_payment_totals paid ON paid.statement_id=s.statement_id
      GROUP BY c.branch_code
   ),
   payment_totals AS (
@@ -83,7 +113,7 @@ const periodAnalyticsSql = `
   registration_totals AS (
     SELECT c.branch_code, COUNT(*)::int AS registrations
       FROM clients c JOIN branch_scope b USING (branch_code)
-     WHERE ($1::text IS NULL OR TO_CHAR(c.registered_date, 'YYYY-MM')=$1)
+     WHERE ($1::text IS NULL OR TO_CHAR(c.installed_date, 'YYYY-MM')=$1)
      GROUP BY c.branch_code
   ),
   cancellation_totals AS (
@@ -98,6 +128,7 @@ const periodAnalyticsSql = `
     SELECT b.branch_code, b.name AS branch,
            COALESCE(ct.client_count,0) AS clients,
            COALESCE(ct.active_count,0) AS active,
+           COALESCE(pct.client_count,0) AS period_clients,
            COALESCE(st.billed,0) AS billed,
            COALESCE(st.collected,0) AS collected,
            COALESCE(pt.revenue,0) AS revenue,
@@ -109,6 +140,7 @@ const periodAnalyticsSql = `
            COALESCE(xt.cancellations,0) AS cancellations
       FROM branch_scope b
       LEFT JOIN client_totals ct USING (branch_code)
+      LEFT JOIN period_client_totals pct USING (branch_code)
       LEFT JOIN statement_totals st USING (branch_code)
       LEFT JOIN payment_totals pt USING (branch_code)
       LEFT JOIN registration_totals rt USING (branch_code)
@@ -116,12 +148,14 @@ const periodAnalyticsSql = `
   ),
   status_data AS (
     SELECT c.status, COUNT(*)::int AS count
-      FROM clients c JOIN branch_scope b USING (branch_code)
+      FROM clients c
+      JOIN branch_scope b USING (branch_code)
      GROUP BY c.status
   )
   SELECT
     COALESCE((SELECT json_agg(json_build_object(
       'branch_code', branch_code, 'branch', branch, 'clients', clients, 'active', active,
+      'period_clients', period_clients,
       'billed', billed, 'collected', collected, 'revenue', revenue,
       'collection_efficiency', collection_efficiency,
       'statements', statements, 'delivered', delivered, 'registrations', registrations,
@@ -129,6 +163,8 @@ const periodAnalyticsSql = `
     ) ORDER BY branch_code) FROM branch_data), '[]'::json) AS branches,
     COALESCE((SELECT json_agg(json_build_object('status', status, 'count', count) ORDER BY status)
                 FROM status_data), '[]'::json) AS statuses,
+    COALESCE((SELECT json_agg(json_build_object('plan', plan_name, 'count', client_count) ORDER BY plan_name)
+                FROM plan_totals), '[]'::json) AS plan_distribution,
     COALESCE((SELECT json_agg(payment) FROM (
       SELECT json_build_object(
         'payment_id', p.payment_id, 'account_no', p.account_no, 'name', c.name,
@@ -264,7 +300,8 @@ router.get('/cancellations', async (req, res) => {
 router.get('/clients', async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT c.account_no,
+      `WITH ${ACCOUNT_SUMMARY_CTES}
+       SELECT c.account_no,
                 c.name,
                 c.contact_no,
                 c.address,
@@ -272,17 +309,20 @@ router.get('/clients', async (req, res) => {
                 c.plan_id,
                 p.plan_name,
                 p.monthly_rate,
-                COALESCE(latest.balance, 0) AS current_balance,
-                COALESCE(latest.balance, 0) AS outstanding_balance,
-                CASE WHEN c.status='Terminated' AND latest.balance IS NOT NULL
-                     THEN CASE WHEN latest.balance > 0 THEN 'Unpaid' ELSE 'Paid' END
-                     ELSE latest.payment_status END AS payment_status,
-                COALESCE(latest.has_pending_payment, FALSE) AS has_pending_payment,
-                TO_CHAR(latest.due_date, 'YYYY-MM-DD') AS current_due_date,
-              c.status,
-                CASE WHEN c.status='Under Review'
+                summary.total_balance AS current_balance,
+                summary.total_balance AS outstanding_balance,
+                summary.previous_balance,
+                summary.current_month_due,
+                summary.total_balance,
+                CASE WHEN summary.total_balance > 0 THEN 'Unpaid'
+                     ELSE COALESCE(summary.latest_payment_status, 'Unpaid') END AS payment_status,
+                summary.has_pending_payment,
+                TO_CHAR(summary.current_due_date, 'YYYY-MM-DD') AS current_due_date,
+                summary.effective_status AS status,
+                CASE WHEN summary.previous_balance > 0 THEN 'Previous billing month arrears'
+                     WHEN summary.effective_status='Under Review'
                      THEN COALESCE(NULLIF(BTRIM(c.status_reason), ''),
-                       CASE WHEN COALESCE(latest.balance, c.current_balance, 0) > 0
+                       CASE WHEN summary.total_balance > 0
                             THEN 'Grace period ended' ELSE 'Flagged for account review' END)
                      ELSE c.status_reason END AS status_reason,
               c.due_day,
@@ -296,44 +336,18 @@ router.get('/clients', async (req, res) => {
               TO_CHAR(c.termination_date, 'YYYY-MM') AS terminated_month,
               TO_CHAR(c.registered_date, 'YYYY-MM-DD') AS created_at,
               TO_CHAR(c.termination_date, 'YYYY-MM-DD') AS updated_at,
-              CASE WHEN c.status='Under Review'
-                   THEN TO_CHAR(COALESCE(c.flagged_date, overdue.due_date,
+              CASE WHEN summary.effective_status='Under Review'
+                   THEN TO_CHAR(COALESCE(c.flagged_date, summary.overdue_due_date,
                      (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date), 'YYYY-MM-DD')
                    ELSE TO_CHAR(c.flagged_date, 'YYYY-MM-DD') END AS flagged_date,
-              TO_CHAR(overdue.due_date, 'YYYY-MM-DD') AS overdue_due_date,
+              TO_CHAR(summary.overdue_due_date, 'YYYY-MM-DD') AS overdue_due_date,
               TO_CHAR(c.grace_end_date, 'YYYY-MM-DD') AS grace_end_date
          FROM clients c
          JOIN branches b USING (branch_code)
          JOIN plans p USING (plan_id)
-         LEFT JOIN LATERAL (
-           SELECT s.due_date,
-                  GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) AS balance,
-                  CASE WHEN COALESCE(paid.verified_paid, 0) >= s.amount THEN 'Paid'
-                       WHEN COALESCE(paid.verified_paid, 0) > 0 THEN 'Partially paid'
-                       ELSE 'Unpaid' END AS payment_status,
-                  paid.has_pending_payment
-             FROM statements s
-             LEFT JOIN LATERAL (
-               SELECT COALESCE(SUM(pm.amount) FILTER (WHERE pm.status='Verified'), 0) AS verified_paid,
-                      COALESCE(BOOL_OR(pm.status='Pending'), FALSE) AS has_pending_payment
-                 FROM payments pm WHERE pm.statement_id=s.statement_id
-             ) paid ON TRUE
-            WHERE s.account_no=c.account_no
-            ORDER BY s.billing_month DESC LIMIT 1
-         ) latest ON TRUE
-         LEFT JOIN LATERAL (
-           SELECT s.due_date
-             FROM statements s
-             LEFT JOIN LATERAL (
-               SELECT COALESCE(SUM(pm.amount) FILTER (WHERE pm.status='Verified'), 0) AS verified_paid
-                 FROM payments pm WHERE pm.statement_id=s.statement_id
-             ) paid ON TRUE
-            WHERE s.account_no=c.account_no
-              AND s.due_date <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date
-              AND GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) > 0
-            ORDER BY s.due_date DESC, s.billing_month DESC LIMIT 1
-         ) overdue ON TRUE
-        WHERE ($1::text IS NULL OR c.branch_code=$1) AND ($2::text IS NULL OR c.status=$2)
+         JOIN account_summary summary USING (account_no)
+        WHERE ($1::text IS NULL OR c.branch_code=$1)
+          AND ($2::text IS NULL OR summary.effective_status=$2)
         ORDER BY c.branch_code, c.client_seq`,
       [req.query.branch || null, req.query.status || null]
     );
@@ -349,19 +363,19 @@ router.get('/statements', async (req, res) => {
   const month = selectedMonth(req.query.month);
   if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
   const { rows } = await query(
-    `SELECT s.statement_id, s.invoice_no, s.account_no, s.billing_month, s.issued_date, s.due_date, s.amount,
-            COALESCE(v.verified_paid, 0) AS amount_paid,
-            GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance,
-            CASE WHEN COALESCE(v.verified_paid, 0) >= s.amount THEN 'Paid'
-                 WHEN COALESCE(v.verified_paid, 0) > 0 THEN 'Partially paid'
+    `WITH ${ACCOUNT_SUMMARY_CTES}
+     SELECT s.statement_id, s.invoice_no, s.account_no, s.billing_month, s.issued_date, s.due_date, s.amount,
+            COALESCE(statement_paid.verified_paid, 0) AS amount_paid,
+            GREATEST(s.amount - COALESCE(statement_paid.verified_paid, 0), 0) AS balance,
+            summary.previous_balance, summary.current_month_due, summary.total_balance,
+            summary.effective_status AS client_status,
+            CASE WHEN COALESCE(statement_paid.verified_paid, 0) >= s.amount THEN 'Paid'
+                 WHEN COALESCE(statement_paid.verified_paid, 0) > 0 THEN 'Partially paid'
                  ELSE 'Unpaid' END AS payment_status,
             s.send_status, s.sent_by_admin, s.sent_at, s.created_at, c.name, c.branch_code
        FROM statements s JOIN clients c USING (account_no)
-       LEFT JOIN LATERAL (
-         SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
-           FROM payments p
-          WHERE p.statement_id=s.statement_id AND p.status='Verified'
-       ) v ON TRUE
+       JOIN account_summary summary USING (account_no)
+       LEFT JOIN summary_payment_totals statement_paid ON statement_paid.statement_id=s.statement_id
       WHERE ($1::text IS NULL OR TO_CHAR(s.billing_month, 'YYYY-MM')=$1)
         AND ($2::text IS NULL OR c.branch_code=$2)
       ORDER BY s.billing_month DESC, s.account_no`, [month, req.query.branch || null]);
@@ -373,10 +387,14 @@ router.get('/payments', async (req, res) => {
   const month = selectedMonth(req.query.month);
   if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
   const { rows } = await query(
-    `SELECT p.*, c.name, c.branch_code, b.name AS branch
+    `WITH ${ACCOUNT_SUMMARY_CTES}
+     SELECT p.*, c.name, c.branch_code, b.name AS branch,
+            summary.effective_status AS client_status,
+            summary.previous_balance, summary.current_month_due, summary.total_balance
        FROM payments p
        JOIN clients c USING (account_no)
        JOIN branches b ON b.branch_code = c.branch_code
+       JOIN account_summary summary USING (account_no)
       WHERE ($1::text IS NULL OR TO_CHAR(COALESCE(p.payment_date, p.created_at::date), 'YYYY-MM') = $1)
         AND ($2::text IS NULL OR c.branch_code = $2)
         AND ($3::text IS NULL OR p.status = $3)

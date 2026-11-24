@@ -1,5 +1,6 @@
 const { tx, query } = require('../db');
 const { changeStatus, addNotice, logActivity } = require('./audit');
+const { ACCOUNT_SUMMARY_CTES, loadAccountSummary } = require('./accountSummary');
 const { sendEmail } = require('./mailer');
 const { loadStatement, pdfBuffer } = require('./statementPdf');
 const { deliverPendingEmails } = require('./notify');
@@ -42,6 +43,10 @@ const invoiceNo = (shortName, dueDate, accountNo) =>
   `${shortName} - ${dateOnly(dueDate).slice(2, 4)}${dateOnly(dueDate).slice(5, 7)} - ${accountNo.slice(4)}`;
 
 async function insertStatement(c, { accountNo, shortName, issuedDate, dueDate }) {
+  const summary = await loadAccountSummary(c, accountNo);
+  if (!summary) throw new Error('Client account not found while creating a statement.');
+  if (Number(summary.previous_balance) > 0) return false;
+
   const result = await c.query(
     `INSERT INTO statements (invoice_no, account_no, billing_month, issued_date, due_date, amount, balance)
      SELECT $1,$2,$3,$4,$5,p.monthly_rate,p.monthly_rate
@@ -54,14 +59,10 @@ async function insertStatement(c, { accountNo, shortName, issuedDate, dueDate })
   await c.query(
     `UPDATE clients cl
         SET current_balance=COALESCE((
-          SELECT SUM(GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0))
+          SELECT SUM(GREATEST(s.amount - COALESCE(s.amount_paid, 0), 0))
             FROM statements s
-            LEFT JOIN LATERAL (
-              SELECT COALESCE(SUM(pm.amount), 0) AS verified_paid
-                FROM payments pm
-               WHERE pm.statement_id=s.statement_id AND pm.status='Verified'
-            ) paid ON TRUE
            WHERE s.account_no=cl.account_no
+             AND s.billing_month <= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date)::date
         ), 0)
       WHERE cl.account_no=$1`,
     [accountNo]
@@ -82,9 +83,13 @@ async function createInitialStatement(c, { accountNo, shortName, installedDate }
 async function generateStatementsForToday(today = new Date()) {
   const todayDate = today instanceof Date ? manilaDate(today) : dateOnly(today);
   const { rows: clients } = await query(
-    `SELECT c.account_no, c.installed_date::text AS installed_date, b.short_name
-       FROM clients c JOIN branches b USING (branch_code)
-      WHERE c.status IN ('Active','Grace Period')`
+    `WITH ${ACCOUNT_SUMMARY_CTES}
+     SELECT c.account_no, c.installed_date::text AS installed_date, b.short_name
+       FROM clients c
+       JOIN branches b USING (branch_code)
+       JOIN account_summary summary USING (account_no)
+      WHERE summary.effective_status IN ('Active','Grace Period')
+        AND summary.previous_balance=0`
   );
   let created = 0;
   for (const c of clients) {
@@ -168,6 +173,33 @@ async function sendPendingStatements() {
 async function runStatusEngine() {
   const out = { grace: 0, review: 0, terminated: 0 };
 
+  const paidTerminations = await query(
+    `WITH ${ACCOUNT_SUMMARY_CTES}
+     SELECT c.account_no
+       FROM clients c
+       JOIN account_summary summary USING (account_no)
+      WHERE c.status='Terminated'
+        AND LOWER(BTRIM(COALESCE(c.termination_reason, ''))) IN ('non-payment', 'no admin decision within 3 days')
+        AND summary.total_balance=0`
+  );
+  for (const r of paidTerminations.rows) {
+    await tx(c => changeStatus(c, r.account_no, 'Active', 'All balances paid', null));
+  }
+
+  const arrears = await query(
+    `WITH ${ACCOUNT_SUMMARY_CTES}
+     SELECT c.account_no
+       FROM clients c
+       JOIN account_summary summary USING (account_no)
+      WHERE summary.previous_balance > 0
+        AND c.status <> 'Terminated'`
+  );
+  for (const r of arrears.rows) {
+    await tx(c => changeStatus(c, r.account_no, 'Terminated',
+      'Unpaid balance from a previous billing month', null, { termReason: 'Non-payment' }));
+    out.terminated++;
+  }
+
   const a = await query(
     `SELECT DISTINCT ON (c.account_no) c.account_no, s.statement_id,
             TO_CHAR(s.due_date + 5, 'YYYY-MM-DD') AS grace_end_date
@@ -177,7 +209,9 @@ async function runStatusEngine() {
            FROM payments p
           WHERE p.statement_id=s.statement_id AND p.status='Verified'
        ) v ON TRUE
-      WHERE c.status='Active' AND GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) > 0
+      WHERE c.status='Active'
+        AND s.billing_month = date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date)::date
+        AND GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) > 0
         AND s.due_date < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date
       ORDER BY c.account_no, s.due_date DESC`
   );
@@ -235,7 +269,7 @@ async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
   if (!p || p.status !== 'Pending') throw new Error('Pending payment not found.');
   const s = (await c.query('SELECT * FROM statements WHERE statement_id=$1 FOR UPDATE', [p.statement_id])).rows[0];
   if (!s || s.account_no !== p.account_no) throw new Error('Payment statement not found.');
-  const client = (await c.query('SELECT status FROM clients WHERE account_no=$1', [p.account_no])).rows[0];
+  const accountSummary = await loadAccountSummary(c, p.account_no);
   const verified = Number((await c.query(
     `SELECT COALESCE(SUM(amount), 0) AS total
        FROM payments WHERE statement_id=$1 AND status='Verified'`, [s.statement_id]
@@ -245,7 +279,7 @@ async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
     const excess = Number(p.amount) - remaining;
     throw new Error(`Payment exceeds the remaining statement balance by PHP ${excess.toFixed(2)}. Reject this payment instead of verifying it.`);
   }
-  const terminated = client && String(client.status).toLowerCase() === 'terminated';
+  const terminated = accountSummary && accountSummary.effective_status === 'Terminated';
   if ((terminated || verified > 0 || String(s.payment_status).toLowerCase() === 'partially paid') && Number(p.amount) !== remaining)
     throw new Error(terminated
       ? 'Terminated accounts must pay the full remaining balance.'
@@ -265,24 +299,22 @@ async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
   await c.query(
     `UPDATE clients
         SET current_balance=COALESCE((
-          SELECT SUM(GREATEST(st.amount - COALESCE(v.verified_paid, 0), 0))
+          SELECT SUM(GREATEST(st.amount - COALESCE(st.amount_paid, 0), 0))
             FROM statements st
-            LEFT JOIN LATERAL (
-              SELECT COALESCE(SUM(pm.amount), 0) AS verified_paid
-                FROM payments pm
-               WHERE pm.statement_id=st.statement_id AND pm.status='Verified'
-            ) v ON TRUE
            WHERE st.account_no=$1
+             AND st.billing_month <= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date)::date
         ), 0)
       WHERE account_no=$1`,
     [p.account_no]
   );
 
   const cl = (await c.query(
-    'SELECT status, current_balance FROM clients WHERE account_no=$1 FOR UPDATE', [p.account_no]
+    'SELECT status, current_balance, termination_reason FROM clients WHERE account_no=$1 FOR UPDATE', [p.account_no]
   )).rows[0];
   if (Number(cl.current_balance) === 0) {
-    if (['Grace Period', 'Under Review'].includes(cl.status))
+    const nonPaymentTermination = cl.status === 'Terminated'
+      && ['non-payment', 'no admin decision within 3 days'].includes(String(cl.termination_reason || '').trim().toLowerCase());
+    if (['Grace Period', 'Under Review'].includes(cl.status) || nonPaymentTermination)
       await changeStatus(c, p.account_no, 'Active', 'Full balance paid', staffUserId);
   }
   const msg = `We received your ${p.method} payment of PHP ${Number(p.amount).toFixed(2)}. Previous verified payments: PHP ${verified.toFixed(2)}. Remaining balance: PHP ${balance.toFixed(2)} (${p.reference_no ? `Ref ${p.reference_no}, ` : ''}O.R. ${orNo}). Thank you!`;
