@@ -15,7 +15,7 @@ UPDATE users SET login_id = CASE login_id
     WHEN 'staff01' THEN 'bagongilog'
     WHEN 'staff02' THEN 'caniogan'
     WHEN 'staff03' THEN 'palatiw'
-    WHEN 'staff04' THEN 'maybungabliss3'
+    WHEN 'staff04' THEN 'maybunga'
     WHEN 'staff05' THEN 'bliss1'
     WHEN 'staff06' THEN 'nagpayong' END
  WHERE login_id IN ('admin01','staff01','staff02','staff03','staff04','staff05','staff06');
