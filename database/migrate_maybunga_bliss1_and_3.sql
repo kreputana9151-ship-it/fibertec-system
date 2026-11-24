@@ -222,12 +222,8 @@ INSERT INTO statements (
 SELECT 'B1 - ' || TO_CHAR(seed.billing_month, 'YYMM') || ' - ' || LPAD(seed.client_seq::text, 4, '0'),
        seed.account_no, seed.billing_month, seed.issued_date, seed.due_date,
        seed.amount, seed.amount_paid, seed.balance, seed.payment_status
-  FROM maybunga_bliss1_billing seed;
-
-UPDATE clients c
-   SET current_balance = seed.balance
   FROM maybunga_bliss1_billing seed
- WHERE c.account_no = seed.account_no;
+ON CONFLICT (account_no, billing_month) DO NOTHING;
 
 INSERT INTO payments (
   statement_id, account_no, amount, method, payment_type, reference_no, or_no,
@@ -243,6 +239,40 @@ SELECT st.statement_id, seed.account_no, seed.payment_amount, seed.method, seed.
   JOIN users staff_user ON staff_user.login_id = 'maybungabliss1' AND staff_user.role = 'staff'
   JOIN staff ON staff.user_id = staff_user.user_id
  WHERE seed.payment_amount > 0;
+
+WITH verified_payments AS (
+   SELECT statement_id, SUM(amount) AS amount_paid
+     FROM payments
+    WHERE status = 'Verified'
+    GROUP BY statement_id
+), corrected_statements AS (
+   SELECT st.statement_id, p.monthly_rate, COALESCE(v.amount_paid, 0) AS amount_paid
+     FROM statements st
+     JOIN clients c ON c.account_no = st.account_no
+     JOIN plans p ON p.plan_id = c.plan_id
+     LEFT JOIN verified_payments v ON v.statement_id = st.statement_id
+    WHERE c.branch_code = '05'
+)
+UPDATE statements st
+    SET amount = corrected.monthly_rate,
+        amount_paid = LEAST(corrected.monthly_rate, corrected.amount_paid),
+        balance = GREATEST(corrected.monthly_rate - corrected.amount_paid, 0),
+        payment_status = CASE
+          WHEN corrected.amount_paid >= corrected.monthly_rate THEN 'Paid'
+          WHEN corrected.amount_paid > 0 THEN 'Partially paid'
+          ELSE 'Unpaid'
+        END
+   FROM corrected_statements corrected
+  WHERE st.statement_id = corrected.statement_id;
+
+UPDATE clients c
+    SET current_balance = COALESCE((
+      SELECT SUM(GREATEST(st.amount - st.amount_paid, 0))
+        FROM statements st
+       WHERE st.account_no = c.account_no
+    ), 0)
+  WHERE c.branch_code = '05'
+    AND c.email IN (SELECT email FROM maybunga_bliss1_sample_data);
 
 DO $$
 BEGIN

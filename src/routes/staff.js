@@ -167,7 +167,7 @@ router.post('/clients', async (req, res) => {
       );
 
       const billing = (await c.query(
-        `SELECT p.monthly_rate, b.short_name
+        `SELECT b.short_name
            FROM plans p CROSS JOIN branches b
           WHERE p.plan_id=$1 AND b.branch_code=$2`,
         [planId, req.user.branchCode]
@@ -175,7 +175,6 @@ router.post('/clients', async (req, res) => {
       await createInitialStatement(c, {
         accountNo,
         shortName: billing.short_name,
-        monthlyRate: billing.monthly_rate,
         registeredDate
       });
 

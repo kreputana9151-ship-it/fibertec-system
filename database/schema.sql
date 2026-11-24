@@ -107,7 +107,7 @@ CREATE TABLE account_status_log (
 );
 
 -- ---------------------------------------------------------------------
--- 4. Billing statements (one per client billing cycle; billing_month is the due-month key)
+-- 4. Billing statements (one per client per monthly subscription cycle)
 -- ---------------------------------------------------------------------
 CREATE TABLE statements (
   statement_id   INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

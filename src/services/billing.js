@@ -25,72 +25,82 @@ const addMonthClamped = value => {
   return new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth(), Math.min(day, last))).toISOString().slice(0, 10);
 };
 const monthStart = value => `${dateOnly(value).slice(0, 7)}-01`;
+const addDays = (value, days) => {
+  const [year, month, day] = dateOnly(value).split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+};
+const isInBillingWindow = (dueDate, today) =>
+  today >= addDays(dueDate, -7) && dueDate <= addDays(today, 7);
 
 // Invoice month follows the cycle's due month, e.g. "B1 - 2612 - 1001".
 const invoiceNo = (shortName, dueDate, accountNo) =>
   `${shortName} - ${dateOnly(dueDate).slice(2, 4)}${dateOnly(dueDate).slice(5, 7)} - ${accountNo.slice(4)}`;
 
-async function insertStatement(c, { accountNo, shortName, issuedDate, dueDate, amount }) {
+async function insertStatement(c, { accountNo, shortName, issuedDate, dueDate }) {
   const result = await c.query(
     `INSERT INTO statements (invoice_no, account_no, billing_month, issued_date, due_date, amount, balance)
-     VALUES ($1,$2,$3,$4,$5,$6,$6) ON CONFLICT (account_no, billing_month) DO NOTHING
+     SELECT $1,$2,$3,$4,$5,p.monthly_rate,p.monthly_rate
+       FROM clients cl JOIN plans p USING (plan_id)
+      WHERE cl.account_no=$2
+     ON CONFLICT (account_no, billing_month) DO NOTHING
      RETURNING statement_id`,
-    [invoiceNo(shortName, dueDate, accountNo), accountNo, monthStart(dueDate), issuedDate, dueDate, amount]
+    [invoiceNo(shortName, dueDate, accountNo), accountNo, monthStart(dueDate), issuedDate, dueDate]
   );
-  if (!result.rowCount) return false;
-  await c.query('UPDATE clients SET current_balance=$2 WHERE account_no=$1', [accountNo, amount]);
-  return true;
+  await c.query(
+    `UPDATE clients cl
+        SET current_balance=COALESCE((
+          SELECT SUM(GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0))
+            FROM statements s
+            LEFT JOIN LATERAL (
+              SELECT COALESCE(SUM(pm.amount), 0) AS verified_paid
+                FROM payments pm
+               WHERE pm.statement_id=s.statement_id AND pm.status='Verified'
+            ) paid ON TRUE
+           WHERE s.account_no=cl.account_no
+        ), 0)
+      WHERE cl.account_no=$1`,
+    [accountNo]
+  );
+  return result.rowCount > 0;
 }
 
-async function createInitialStatement(c, { accountNo, shortName, monthlyRate, registeredDate }) {
+async function createInitialStatement(c, { accountNo, shortName, registeredDate }) {
   const issuedDate = dateOnly(registeredDate);
-  if (issuedDate > manilaDate(new Date())) return false;
+  const todayDate = manilaDate(new Date());
+  if (issuedDate > todayDate) return false;
   const dueDate = addMonthClamped(issuedDate);
-  return insertStatement(c, {
-    accountNo, shortName, issuedDate, dueDate, amount: Number(monthlyRate)
-  });
+  if (!isInBillingWindow(dueDate, todayDate)) return false;
+  return insertStatement(c, { accountNo, shortName, issuedDate, dueDate });
 }
 
-/* Create each statement on its cycle anniversary, due one clamped month later. */
+/* Create at most the current cycle's statement when its due date is within seven days. */
 async function generateStatementsForToday(today = new Date()) {
   const todayDate = today instanceof Date ? manilaDate(today) : dateOnly(today);
   const { rows: clients } = await query(
-    `SELECT c.account_no, c.registered_date::text AS registered_date, p.monthly_rate, b.short_name
-       FROM clients c JOIN plans p USING (plan_id) JOIN branches b USING (branch_code)
+    `SELECT c.account_no, c.registered_date::text AS registered_date, b.short_name
+       FROM clients c JOIN branches b USING (branch_code)
       WHERE c.status IN ('Active','Grace Period')`
   );
   let created = 0;
   for (const c of clients) {
     await tx(async cx => {
+      await cx.query('SELECT account_no FROM clients WHERE account_no=$1 FOR UPDATE', [c.account_no]);
       const { rows: latestRows } = await cx.query(
-        `SELECT s.due_date::text AS due_date,
-                GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance
+        `SELECT s.due_date::text AS due_date
            FROM statements s
-           LEFT JOIN LATERAL (
-             SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
-               FROM payments p
-              WHERE p.statement_id=s.statement_id AND p.status='Verified'
-           ) v ON TRUE
           WHERE s.account_no=$1
           ORDER BY s.due_date DESC LIMIT 1`, [c.account_no]
       );
-      let latest = latestRows[0] || null;
-      let issuedDate = latest ? dateOnly(latest.due_date) : dateOnly(c.registered_date);
-      while (issuedDate <= todayDate) {
-        const dueDate = addMonthClamped(issuedDate);
-        const amount = Number(c.monthly_rate) + Number(latest ? latest.balance : 0);
-        const inserted = await insertStatement(cx, {
-          accountNo: c.account_no,
-          shortName: c.short_name,
-          issuedDate,
-          dueDate,
-          amount
-        });
-        if (!inserted) break;
-        created++;
-        latest = { due_date: dueDate, balance: amount };
-        issuedDate = dueDate;
-      }
+      const latest = latestRows[0] || null;
+      const issuedDate = latest ? dateOnly(latest.due_date) : dateOnly(c.registered_date);
+      const dueDate = addMonthClamped(issuedDate);
+      if (!isInBillingWindow(dueDate, todayDate)) return;
+      if (await insertStatement(cx, {
+        accountNo: c.account_no,
+        shortName: c.short_name,
+        issuedDate,
+        dueDate
+      })) created++;
     });
   }
   return created;
@@ -232,15 +242,16 @@ async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
   );
   await c.query(
     `UPDATE clients
-        SET current_balance=COALESCE(
-          (SELECT GREATEST(st.amount - COALESCE(v.verified_paid, 0), 0)
-             FROM statements st
-             LEFT JOIN LATERAL (
-               SELECT COALESCE(SUM(pm.amount), 0) AS verified_paid
-                 FROM payments pm
-                WHERE pm.statement_id=st.statement_id AND pm.status='Verified'
-             ) v ON TRUE
-            WHERE st.account_no=$1 ORDER BY st.billing_month DESC LIMIT 1), 0)
+        SET current_balance=COALESCE((
+          SELECT SUM(GREATEST(st.amount - COALESCE(v.verified_paid, 0), 0))
+            FROM statements st
+            LEFT JOIN LATERAL (
+              SELECT COALESCE(SUM(pm.amount), 0) AS verified_paid
+                FROM payments pm
+               WHERE pm.statement_id=st.statement_id AND pm.status='Verified'
+            ) v ON TRUE
+           WHERE st.account_no=$1
+        ), 0)
       WHERE account_no=$1`,
     [p.account_no]
   );
