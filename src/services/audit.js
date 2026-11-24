@@ -12,14 +12,14 @@ async function changeStatus(c, accountNo, newStatus, reason, userId, extra = {})
   const old = rows[0].status;
   if (old === newStatus) return old;
   await c.query(
-    `UPDATE clients SET status=$2, status_reason=$3,
-       flagged_date=COALESCE($4, CASE WHEN $2='Under Review' THEN (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date END),
-       grace_end_date=$5,
-       termination_date=COALESCE($6, CASE WHEN $2='Terminated' THEN (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date END),
-       termination_reason=$7,
+    `UPDATE clients SET status=$2::varchar(15), status_reason=$3::varchar(60),
+       flagged_date=COALESCE($4::date, CASE WHEN $2::varchar(15)='Under Review' THEN (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date END),
+       grace_end_date=$5::date,
+       termination_date=COALESCE($6::date, CASE WHEN $2::varchar(15)='Terminated' THEN (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date END),
+       termination_reason=$7::varchar(60),
        current_balance=COALESCE(
-         (SELECT balance FROM statements WHERE account_no=$1 ORDER BY billing_month DESC LIMIT 1), 0)
-     WHERE account_no=$1`,
+         (SELECT balance FROM statements WHERE account_no=$1::char(8) ORDER BY billing_month DESC LIMIT 1), 0)
+     WHERE account_no=$1::char(8)`,
     [accountNo, newStatus, reason, extra.flagged || null, extra.graceEnd || null,
      extra.termDate || null, extra.termReason || null]
   );

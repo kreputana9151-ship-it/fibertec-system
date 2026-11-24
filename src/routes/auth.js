@@ -8,8 +8,8 @@ const { sendEmail } = require('../services/mailer');
 
 const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
 const sha256 = t => crypto.createHash('sha256').update(t).digest('hex');
-const goodPassword = p => typeof p === 'string' && p.length >= 8 && p.length <= 72;
-const PW_RULE = 'Password must be 8 to 72 characters.';
+const goodPassword = p => typeof p === 'string' && p.length >= 8 && p.length <= 72 && !/\s/.test(p);
+const PW_RULE = 'Password must be 8 to 72 characters and must not contain whitespace.';
 
 // tiny in-memory limiter: max N tries per IP per path per window
 const hits = new Map();
@@ -37,14 +37,12 @@ async function findUsers(id) {
 // client: 8-digit account no. OR email | staff: branch name (bagongilog, caniogan, ...) | admin: rguerrero
 router.post('/login', limit(10, 5 * 60 * 1000), wrap(async (req, res) => {
   const { loginId, password } = req.body || {};
-  if (!loginId || !password) return res.status(400).json({ error: 'Username and password required' });
+  if (typeof loginId !== 'string' || !loginId) return res.status(400).json({ error: 'Account number, email, or username required.' });
+  if (/\s/.test(loginId)) return res.status(400).json({ error: 'Account number, email, or username must not contain whitespace.' });
+  if (typeof password !== 'string' || !password) return res.status(400).json({ error: 'Password required.' });
+  if (/\s/.test(password)) return res.status(400).json({ error: 'Password must not contain whitespace.' });
 
-  const identifier = String(loginId);
-  if (identifier !== identifier.trim()) {
-    return res.status(400).json({ error: 'Account number, email, or username must not have leading or trailing spaces.' });
-  }
-
-  const rows = await findUsers(identifier);
+  const rows = await findUsers(loginId);
   if (rows.length > 1) return res.status(400).json({ error: 'More than one account uses this email. Please log in with your 8-digit account number.' });
   const u = rows[0];
   if (!u || !u.is_active || !(await bcrypt.compare(String(password), u.password_hash)))
@@ -62,9 +60,11 @@ router.post('/login', limit(10, 5 * 60 * 1000), wrap(async (req, res) => {
 // POST /api/auth/change-password   { currentPassword, newPassword }   (logged in)
 router.post('/change-password', requireAuth, limit(10, 5 * 60 * 1000), wrap(async (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
+  if (typeof currentPassword !== 'string' || !currentPassword) return res.status(400).json({ error: 'Current password required.' });
+  if (/\s/.test(currentPassword)) return res.status(400).json({ error: 'Current password must not contain whitespace.' });
   if (!goodPassword(newPassword)) return res.status(400).json({ error: PW_RULE });
   const u = (await query('SELECT password_hash FROM users WHERE user_id=$1', [req.user.userId])).rows[0];
-  if (!u || !(await bcrypt.compare(String(currentPassword || ''), u.password_hash)))
+  if (!u || !(await bcrypt.compare(currentPassword, u.password_hash)))
     return res.status(401).json({ error: 'Current password is wrong' });
   await query('UPDATE users SET password_hash=$2, must_change_password=FALSE WHERE user_id=$1',
     [req.user.userId, await bcrypt.hash(newPassword, 10)]);
@@ -75,7 +75,11 @@ router.post('/change-password', requireAuth, limit(10, 5 * 60 * 1000), wrap(asyn
 // Clients get an email link. Staff/admin have no email, so they must ask the owner to reset it.
 const SAME_ANSWER = { ok: true, message: 'If this account has an email on file, a password reset link has been sent to your Gmail. Please check your Inbox or Spam folder.' };
 router.post('/forgot-password', limit(5, 15 * 60 * 1000), wrap(async (req, res) => {
-  const id = String((req.body || {}).loginId || '').trim();
+  const loginId = (req.body || {}).loginId;
+  if (typeof loginId === 'string' && /\s/.test(loginId)) {
+    return res.status(400).json({ error: 'Account number or email must not contain whitespace.' });
+  }
+  const id = typeof loginId === 'string' ? loginId : '';
   if (id) {
     const allMatched = await findUsers(id);
     const rows = allMatched.filter(r => r.role === 'client' && r.is_active && r.email);

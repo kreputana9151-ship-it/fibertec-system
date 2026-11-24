@@ -233,6 +233,7 @@ async function showAdmin(id) {
 }
 function pct(a, b) { return b ? Math.round(a / b * 1000) / 10 : 0; }
 var ACTIVE_ADMIN_PAGE = "dash", DASH_REQUEST = 0, ANALYTICS_REQUEST = 0;
+var ADMIN_CANCEL_REQUEST = 0, ADMIN_CANCEL_POLL = null;
 function branchScope(id) {
   var b = val(id);
   if (b) return [b];
@@ -248,6 +249,12 @@ async function renderDash() {
   $("dash-chart").innerHTML = "";
   $("donut-n").innerHTML = "";
   setDonut("status-donut", [0, 0, 0, 0], STATUS_COLORS);
+  refreshAdminCancellations();
+  if (!ADMIN_CANCEL_POLL) {
+    ADMIN_CANCEL_POLL = setInterval(function () {
+      if (!document.hidden && ACTIVE_ADMIN_PAGE === "dash") refreshAdminCancellations();
+    }, 3000);
+  }
   try {
     var data = await adminApi("/dashboard" + periodQuery(m, b));
     if (request !== DASH_REQUEST) return;
@@ -297,6 +304,32 @@ async function renderDash() {
     $("recent-pay").innerHTML = h + (rp.length ? "" : "<tr><td colspan='4' class='muted'>No payments for this selection.</td></tr>") + "</tbody>";
   } catch (e) {
     if (request === DASH_REQUEST) toast("Dashboard data could not be loaded: " + e.message, "error");
+  }
+}
+
+async function refreshAdminCancellations() {
+  var el = $("dash-cancellations");
+  if (!el) return;
+  var request = ++ADMIN_CANCEL_REQUEST, branch = val("d-branch");
+  var branchCode = branch ? branchCodeForName(branch) : "";
+  var path = "/cancellations" + (branchCode ? "?branch=" + encodeURIComponent(branchCode) : "");
+  try {
+    var rows = await adminApi(path);
+    if (request !== ADMIN_CANCEL_REQUEST) return;
+    var pending = rows.filter(function (r) { return r.status === "Pending"; });
+    $("admin-req-count").textContent = pending.length;
+    el.innerHTML = pending.length
+      ? pending.map(function (r) {
+        return "<div class='row-line'><span><b>" + esc(r.name) + "</b> (" + esc(r.account_no) + ")" +
+          "<small>" + esc(r.branch) + " &middot; Requested " + fmtD(r.request_date) + " &middot; " + esc(r.reason) + "</small></span>" +
+          "<span class='badge orange'>Pending</span></div>";
+      }).join("")
+      : "<p class='empty'>No pending cancellation requests.</p>";
+  } catch (e) {
+    if (request === ADMIN_CANCEL_REQUEST) {
+      $("admin-req-count").textContent = "0";
+      el.innerHTML = "<p class='empty'>Could not load cancellation requests: " + esc(e.message || "Request failed.") + "</p>";
+    }
   }
 }
 function pesoPlainK(v) { return v >= 1000 ? "\u20B1" + (v / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 }) + "K" : "\u20B1" + v; }

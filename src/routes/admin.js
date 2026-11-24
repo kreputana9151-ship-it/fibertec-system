@@ -153,6 +153,33 @@ router.get('/dashboard', async (req, res) => {
   }
 });
 
+// GET /api/admin/cancellations?branch=04
+router.get('/cancellations', async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT r.request_id, r.account_no, r.request_date, r.reason, r.status,
+              c.name, b.name AS branch
+         FROM cancellation_requests r
+         JOIN clients c USING (account_no)
+         JOIN branches b USING (branch_code)
+        WHERE r.status='Pending'
+          AND ($1::text IS NULL OR c.branch_code::text=$1::text)
+           AND NOT EXISTS (
+             SELECT 1 FROM account_status_log h
+              WHERE h.account_no=c.account_no
+                AND h.new_status='Active'
+                AND h.changed_at > r.created_at
+           )
+        ORDER BY r.created_at DESC, r.request_id DESC`,
+      [req.query.branch || null]
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('GET /api/admin/cancellations error:', e);
+    res.status(500).json({ error: 'Could not load pending cancellation requests.' });
+  }
+});
+
 // GET /api/admin/clients?branch=04&status=Active
 router.get('/clients', async (req, res) => {
   try {
@@ -273,7 +300,7 @@ router.patch('/clients/:accountNo', async (req, res) => {
   const b = req.body || {};
   const name = String(b.name || '').trim();
   const contactNo = String(b.contactNo || '').trim();
-  const email = String(b.email || '').trim().toLowerCase();
+  const email = typeof b.email === 'string' ? b.email.toLowerCase() : '';
   const address = String(b.address || '').trim();
   const planId = Number(b.planId);
   const facebook = String(b.facebook || '').trim() || null;
@@ -281,6 +308,9 @@ router.patch('/clients/:accountNo', async (req, res) => {
 
   if (!name || !contactNo || !email || !address || !Number.isInteger(planId)) {
     return res.status(400).json({ error: 'Please complete the client name, contact number, email, address, and plan.' });
+  }
+  if (/\s/.test(email)) {
+    return res.status(400).json({ error: 'Client email must not contain whitespace.' });
   }
   if (!/^09[0-9]{9}$/.test(contactNo)) {
     return res.status(400).json({ error: 'Mobile number must be 11 digits starting with 09.' });
@@ -380,7 +410,9 @@ router.get('/users', async (req, res) => {
 // POST /api/admin/users/:userId/reset-password  { newPassword }
 router.post('/users/:userId/reset-password', async (req, res) => {
   const pw = (req.body || {}).newPassword;
-  if (typeof pw !== 'string' || pw.length < 8 || pw.length > 72) return res.status(400).json({ error: 'Password must be 8 to 72 characters.' });
+  if (typeof pw !== 'string' || pw.length < 8 || pw.length > 72 || /\s/.test(pw)) {
+    return res.status(400).json({ error: 'Password must be 8 to 72 characters and must not contain whitespace.' });
+  }
   const target = (await query('SELECT login_id FROM users WHERE user_id=$1', [req.params.userId])).rows[0];
   if (!target) return res.status(404).json({ error: 'Account not found' });
   await tx(async c => {

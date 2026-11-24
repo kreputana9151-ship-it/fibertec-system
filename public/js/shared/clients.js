@@ -400,7 +400,7 @@ function viewClient(no) {
     "<div class='cd-sec'><h4>Address and contact</h4>" + kv("Address", esc(c.address || "—")) + kv("Contact no.", esc(c.contact || "—")) + kv("Email", esc(c.email || "—")) + kv("FB / Messenger", esc(c.fb || "—")) + "</div>" +
     "<div class='cd-sec'><h4>Current statement</h4>" + kv("Invoice no.", esc(s.inv)) + kv("Billing date", safeFmtD(s.bill)) + kv("Due date", safeFmtD(s.due)) + kv("Paid / due", peso(s.paid) + " / " + peso(s.amount)) + "</div>" +
     "<div class='cd-sec'><h4>Connection device location</h4><p style='margin:6px 0 0'>" + esc(deviceLocation) + "</p></div></div>" +
-    (isAdmin() ? "" : "<div class='cd-note' style='padding-bottom:18px'><div class='view-only' style='margin:0'>Staff can submit cancellation requests for Admin approval. Only Administrators can directly terminate or reactivate accounts.</div></div>"), "");
+    (isAdmin() ? "" : "<div class='cd-note' style='padding-bottom:18px'><div class='view-only' style='margin:0'>Staff can approve or reject client cancellation requests. Only Administrators can reactivate terminated accounts.</div></div>"), "");
 }
 
 /* ---------- Admin actions (Live Neon DB API) ---------- */
@@ -430,7 +430,7 @@ async function saveClientEdit(no) {
   var name = $("e-name").value.trim();
   var address = $("e-address").value.trim();
   var contactNo = $("e-contact").value.trim();
-  var email = $("e-email").value.trim().toLowerCase();
+  var email = $("e-email").value.toLowerCase();
   var facebook = $("e-facebook").value.trim();
   var routerLocation = $("e-device").value.trim();
   var planId = Number($("e-plan").value);
@@ -439,6 +439,10 @@ async function saveClientEdit(no) {
 
   if (!name || !address || !contactNo || !email) {
     err.innerHTML = "Please complete the client name, address, contact number, and email.";
+    return;
+  }
+  if (/\s/.test(email)) {
+    err.innerHTML = "Client email must not contain whitespace.";
     return;
   }
   if (!/^09[0-9]{9}$/.test(contactNo)) {
@@ -600,7 +604,7 @@ async function saveClient() {
   var errEl = $("r-err"), btn = $("r-submit");
   errEl.innerHTML = "";
 
-  var name = v("r-name"), addr = v("r-addr"), mobile = v("r-mobile"), email = v("r-email").toLowerCase();
+  var name = v("r-name"), addr = v("r-addr"), mobile = v("r-mobile"), email = $("r-email") ? $("r-email").value.toLowerCase() : "";
   var pass = $("r-pass") ? $("r-pass").value : "";
   var planName = v("r-plan"), device = v("r-device"), regDate = v("r-date");
 
@@ -612,8 +616,16 @@ async function saveClient() {
     errEl.innerHTML = "Mobile no. must be 11 digits starting with 09.";
     return;
   }
+  if (/\s/.test(email)) {
+    errEl.innerHTML = "Client email must not contain whitespace.";
+    return;
+  }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     errEl.innerHTML = "Please enter a valid email address.";
+    return;
+  }
+  if (/\s/.test(pass)) {
+    errEl.innerHTML = "Initial portal password must not contain whitespace.";
     return;
   }
   if (pass.length < 8 || pass.length > 72) {

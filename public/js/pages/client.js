@@ -112,6 +112,7 @@ function requestCancel() {
 }
 function confirmCancel() {
   var pw = val("cx-pw"); if (!pw) { $("cx-err").innerHTML = "Please enter your password."; return; }
+  if (/\s/.test(pw)) { $("cx-err").innerHTML = "Password must not contain whitespace."; return; }
   apiCall("POST", "/api/client/cancellation", { reason: val("cx-reason"), password: pw }).then(function () { closeModal(); toast("Cancellation request sent to your branch staff."); return loadAll(); })
     .then(renderClient).catch(function (e) { if (e && e.status != 401) $("cx-err").innerHTML = esc((e && e.message) || "Could not send the request."); });
 }

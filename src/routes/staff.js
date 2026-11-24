@@ -60,8 +60,8 @@ router.post('/clients', async (req, res) => {
   const b = req.body || {};
   const name = String(b.name || '').trim();
   const contactNo = String(b.contactNo || b.contact_no || '').trim();
-  const email = String(b.email || '').trim().toLowerCase();
-  const password = String(b.password || '');
+  const email = typeof b.email === 'string' ? b.email.toLowerCase() : '';
+  const password = typeof b.password === 'string' ? b.password : '';
   const address = String(b.address || '').trim();
   const planId = b.planId || b.plan_id;
   const registeredDate = b.registeredDate || b.registered_date || new Date().toISOString().slice(0, 10);
@@ -69,8 +69,14 @@ router.post('/clients', async (req, res) => {
   if (!name || !contactNo || !email || !address || !planId || !registeredDate) {
     return res.status(400).json({ error: 'Please complete all required client details (name, contact number, email, address, plan, and registration date).' });
   }
+  if (/\s/.test(email)) {
+    return res.status(400).json({ error: 'Client email must not contain whitespace.' });
+  }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return res.status(400).json({ error: 'Please enter a valid client email address.' });
+  }
+  if (/\s/.test(password)) {
+    return res.status(400).json({ error: 'Client portal password must not contain whitespace.' });
   }
   if (password.length < 8 || password.length > 72) {
     return res.status(400).json({ error: 'Client portal password must be between 8 and 72 characters.' });
@@ -287,21 +293,36 @@ router.get('/cancellations', async (req, res) => {
   const { rows } = await query(
     `SELECT r.*, c.name FROM cancellation_requests r JOIN clients c USING (account_no)
       WHERE c.branch_code=$1 AND r.status='Pending'
+        AND NOT EXISTS (
+          SELECT 1 FROM account_status_log h
+           WHERE h.account_no=c.account_no
+             AND h.new_status='Active'
+             AND h.changed_at > r.created_at
+        )
       ORDER BY r.created_at DESC`, [req.user.branchCode]);
   res.json(rows);
 });
 
 router.patch('/cancellations/:id', async (req, res) => {
   try {
-    const approve = !!req.body.approve;
+    const approve = req.body && req.body.approve;
+    if (typeof approve !== 'boolean') return res.status(400).json({ error: 'Choose whether to approve or reject the cancellation request.' });
     await tx(async c => {
       const r = (await c.query(
         `SELECT r.* FROM cancellation_requests r JOIN clients cl USING (account_no)
-          WHERE r.request_id=$1 AND cl.branch_code=$2 AND r.status='Pending' FOR UPDATE OF r`,
+          WHERE r.request_id=$1::integer AND cl.branch_code=$2::char(2)
+            AND r.status='Pending'
+            AND NOT EXISTS (
+              SELECT 1 FROM account_status_log h
+               WHERE h.account_no=cl.account_no
+                 AND h.new_status='Active'
+                 AND h.changed_at > r.created_at
+            )
+          FOR UPDATE OF r`,
         [req.params.id, req.user.branchCode])).rows[0];
       if (!r) throw new Error('Pending cancellation request not found in your branch.');
       await c.query(
-        'UPDATE cancellation_requests SET status=$2, decided_by_staff=$3, decided_at=now() WHERE request_id=$1',
+        'UPDATE cancellation_requests SET status=$2::varchar(10), decided_by_staff=$3::integer, decided_at=now() WHERE request_id=$1::integer',
         [r.request_id, approve ? 'Approved' : 'Rejected', req.user.userId]);
       if (approve) {
         await changeStatus(c, r.account_no, 'Terminated', 'Cancellation approved', req.user.userId,

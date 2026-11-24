@@ -19,9 +19,10 @@ function renderStaff() {
   var top = mine.slice().sort(function (a, b) { return rank[a.status] - rank[b.status] || (a.balance > 0 ? 0 : 1) - (b.balance > 0 ? 0 : 1); }).slice(0, 6);
   $("dash-clients").innerHTML = top.map(function (c) { return "<div class='row-line' style='cursor:pointer' onclick='viewClient(\"" + c.no + "\")'><span>" + esc(c.name) + "<small>" + c.no + " &middot; " + c.plan + "</small></span>" + badgeFor(c.status) + "</div>"; }).join("") + "<p class='muted' style='margin:8px 6px 0'><a style='color:#2b86ff;cursor:pointer' onclick='showStaff(\"clients\")'>View all " + mine.length + " clients &rarr;</a></p>";
   /* cancellation requests */
-  var rq = myRequests("Pending"), done = STAFF_REQUESTS.filter(function (r) { return r.status != "Pending"; }).slice(-3).reverse();
-  $("dash-requests").innerHTML = (rq.length ? rq.map(function (r) { return "<div class='q-row'><span><b>" + esc(r.name) + "</b> (" + r.acc + ")<small>Requested " + fmtD(r.date) + " &middot; " + esc(r.reason) + "</small></span><button class='btn btn-green' onclick='askRequest(\"" + r.id + "\",true)'>Approve</button><button class='btn btn-red' onclick='askRequest(\"" + r.id + "\",false)'>Reject</button></div>"; }).join("") : "<p class='empty'>No pending cancellation requests.</p>") +
-    done.map(function (r) { return "<div class='row-line'><span>" + esc(r.name) + "<small>" + fmtD(r.date) + "</small></span>" + (r.status == "Approved" ? "<span class='badge red'>Terminated</span>" : "<span class='badge red'>Rejected</span>") + "</div>"; }).join("");
+  var rq = myRequests("Pending");
+  $("dash-requests").innerHTML = rq.length
+    ? rq.map(function (r) { return "<div class='q-row'><span><b>" + esc(r.name) + "</b> (" + r.acc + ")<small>Requested " + fmtD(r.date) + " &middot; " + esc(r.reason) + "</small></span><button class='btn btn-green' onclick='askRequest(\"" + r.id + "\",true)'>Approve</button><button class='btn btn-red' onclick='askRequest(\"" + r.id + "\",false)'>Reject</button></div>"; }).join("")
+    : "<p class='empty'>No pending cancellation requests.</p>";
   $("req-count").innerHTML = rq.length;
   /* recent activity: what staff just did first, then seeded history from the branch's records */
   var dyn = S.act.filter(function (a) { return a.b == STAFF_BRANCH; }).reverse().map(function (a) { return { t: a.t, when: a.when }; });

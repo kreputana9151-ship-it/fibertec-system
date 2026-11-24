@@ -49,9 +49,10 @@ function goPortal(d) {
 }
 function login() {
   var id = val("account"), pw = val("password"), err = $("error");
-  if (id !== id.trim()) { err.innerHTML = "Account number, email, or username must not have leading or trailing spaces."; return; }
+  if (/\s/.test(id)) { err.innerHTML = "Account number, email, or username must not contain whitespace."; return; }
   if (!id) { err.innerHTML = "Please enter your account number, email, or username."; return; }
   if (!pw) { err.innerHTML = "Please enter your password."; return; }
+  if (/\s/.test(pw)) { err.innerHTML = "Password must not contain whitespace."; return; }
   err.innerHTML = "";
   api("login", { loginId: id, password: pw }).then(function (r) {
     if (!r.ok) { err.innerHTML = esc(r.data.error || "Login failed."); return; }
@@ -61,6 +62,7 @@ function login() {
 }
 function changeFirstPassword() {
   var n = val("cp-new"), c = val("cp-confirm"), err = $("cp-error");
+  if (/\s/.test(n) || /\s/.test(c)) { err.innerHTML = "Password must not contain whitespace."; return; }
   if (n.length < 8) { err.innerHTML = "Password must be at least 8 characters."; return; }
   if (n != c) { err.innerHTML = "The two passwords do not match."; return; }
   api("change-password", { currentPassword: LOGIN_PW, newPassword: n }, LOGIN_RESULT.token).then(function (r) {

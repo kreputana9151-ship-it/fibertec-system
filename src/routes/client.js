@@ -96,8 +96,10 @@ router.post('/payments', wrap(async (req, res) => {
 router.post('/cancellation', wrap(async (req, res) => {
   const { reason, password } = req.body || {};
   if (!reason) return res.status(400).json({ error: 'Reason required' });
+  if (typeof password !== 'string' || !password) return res.status(400).json({ error: 'Password required.' });
+  if (/\s/.test(password)) return res.status(400).json({ error: 'Password must not contain whitespace.' });
   const u = (await query('SELECT password_hash FROM users WHERE user_id=$1', [req.user.userId])).rows[0];
-  if (!u || !(await bcrypt.compare(String(password || ''), u.password_hash))) return res.status(403).json({ error: 'Incorrect password. Cancellation was not submitted.' });
+  if (!u || !(await bcrypt.compare(password, u.password_hash))) return res.status(403).json({ error: 'Incorrect password. Cancellation was not submitted.' });
   const open = await query("SELECT 1 FROM cancellation_requests WHERE account_no=$1 AND status='Pending'", [req.user.accountNo]);
   if (open.rowCount) return res.status(409).json({ error: 'You already have a pending request' });
   const r = await query(
