@@ -1,9 +1,9 @@
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 async function sendEmail(to, subject, text, opts = {}) {
-  const key = process.env.RESEND_API_KEY;
-  if (!key) {
-    console.error('[EMAIL NOT SENT] RESEND_API_KEY is not set');
+  const webhook = process.env.GMAIL_WEBHOOK_URL;
+  if (!webhook) {
+    console.error('[EMAIL NOT SENT] GMAIL_WEBHOOK_URL is not set');
     return false;
   }
 
@@ -11,38 +11,28 @@ async function sendEmail(to, subject, text, opts = {}) {
     <div style="background:#013f70;color:#fff;padding:14px 18px;font-size:18px;font-weight:bold">FiberTec IT Solutions</div>
     <div style="padding:16px 18px;border:1px solid #dde">${esc(text).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>').replace(/\n/g, '<br>')}</div></div>`;
 
-  const body = {
-    from: `${process.env.MAIL_FROM_NAME || 'FiberTec Billing'} <onboarding@resend.dev>`,
-    to: [to],
-    subject,
-    text,
-    html,
-  };
-
-  if (opts.attachments && opts.attachments.length) {
-    body.attachments = opts.attachments.map(a => ({
-      filename: a.name,
-      content: a.content,
-    }));
-  }
-
   try {
-    const r = await fetch('https://api.resend.com/emails', {
+    const r = await fetch(webhook, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to,
+        subject,
+        text,
+        html,
+        fromName: process.env.MAIL_FROM_NAME || 'FiberTec IT Solutions',
+        attachments: opts.attachments || [],
+      }),
     });
-    if (!r.ok) {
-      console.error(`[EMAIL FAILED] Resend HTTP ${r.status}:`, await r.text());
+    const body = await r.text();
+    if (!r.ok || !body.includes('"ok":true')) {
+      console.error(`[EMAIL FAILED] Gmail Webhook HTTP ${r.status}:`, body);
       return false;
     }
-    console.log(`[EMAIL SENT] Resend API to ${to}`);
+    console.log(`[EMAIL SENT] Gmail Webhook to ${to}`);
     return true;
   } catch (e) {
-    console.error('[EMAIL FAILED] Resend error:', e);
+    console.error('[EMAIL FAILED] Gmail Webhook error:', e);
     return false;
   }
 }
