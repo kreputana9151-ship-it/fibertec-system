@@ -56,7 +56,14 @@
         </div>
         <div id="steps23" class="hidden">
           <p class="c-lab16 c-step">STEP 2 &nbsp;&nbsp; HOW TO PAY</p>
-          <div class="c-pay"><b>GCash number</b><b>0900 000 0000</b><b>Account name</b><b>F**ER*EC IT S.</b><b>Amount</b><b id="payamt"></b><b>Paying cash instead</b><span>Pay at <span id="p-branch" style="opacity:1"></span> branch. Staff will encode it and give you an official receipt</span></div>
+          <div class="c-pay"><b>Payment channel</b><b>GCash</b><b>Payment amount</b><b id="payamt"></b><b>Paying cash instead</b><span>Pay at <span id="p-branch" style="opacity:1"></span> branch. Staff will encode it and give you an official receipt</span></div>
+          <div class="payment-breakdown" id="payment-preview" aria-live="polite">
+            <b class="payment-breakdown-title">Payment breakdown / receipt preview</b>
+            <div class="payment-breakdown-row"><span>Statement total</span><b id="pay-total"></b></div>
+            <div class="payment-breakdown-row"><span>Previously verified</span><b id="pay-previous"></b></div>
+            <div class="payment-breakdown-row"><span>This payment</span><b id="pay-current"></b></div>
+            <div class="payment-breakdown-row"><span>Remaining after verification</span><b id="pay-remaining"></b></div>
+          </div>
           <p class="c-lab16 c-step">STEP 3 &nbsp;&nbsp; INPUT YOUR GCASH REFERENCE NUMBER</p>
           <p class="c-partial hidden" id="partialnote">After staff verify your half. Once your account is in the grace period, the full amount is required.</p>
           <input type="text" id="ref" class="c-ref" maxlength="13" placeholder="13 digits from your GCash receipt">

@@ -14,9 +14,15 @@ function compose(n) {
 
 async function deliverPendingEmails() {
   const { rows } = await query(
-    `SELECT n.notice_id, n.notice_type, n.message, n.recipient, c.name, s.invoice_no, s.balance,
+    `SELECT n.notice_id, n.notice_type, n.message, n.recipient, c.name, s.invoice_no,
+            GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance,
             s.due_date::text AS due_date, c.grace_end_date::text AS grace_end
        FROM notices n JOIN clients c ON c.account_no = n.account_no LEFT JOIN statements s ON s.statement_id = n.statement_id
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
+           FROM payments p
+          WHERE p.statement_id=s.statement_id AND p.status='Verified'
+       ) v ON TRUE
       WHERE n.channel='Email' AND n.delivery_status='Pending' AND n.notice_type <> '7-Day Billing Notice'
         AND n.created_at > now() - interval '3 days' ORDER BY n.notice_id LIMIT 50`);
   for (const n of rows) {

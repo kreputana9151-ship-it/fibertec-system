@@ -109,32 +109,39 @@ BEGIN
   END IF;
 END $$;
 
-CREATE TEMP TABLE maybunga_bliss1_samples ON COMMIT DROP AS
+CREATE TEMP TABLE maybunga_bliss1_sample_data ON COMMIT DROP AS
 WITH sample_data (
   sample_no, name, contact_no, email, address, plan_name, registered_date,
   due_day, status, status_reason, flagged_date, grace_end_date,
   termination_date, termination_reason, current_balance
 ) AS (
   VALUES
-    (1, 'Amelia Santos', '09980000001', 'maybunga.bliss1.sample01@example.com', 'Block 1 Lot 4, Maybunga Bliss 1, Maybunga, Pasig City', 'LiteSpeed 50Mbps', DATE '2025-01-14', 5,  'Active',       NULL, NULL::date, NULL::date, NULL::date, NULL, 0::numeric),
-    (2, 'Rafael Dizon',  '09980000002', 'maybunga.bliss1.sample02@example.com', 'Block 2 Lot 8, Maybunga Bliss 1, Maybunga, Pasig City', 'Turbo 110 Mbps', DATE '2025-04-22', 10, 'Active',       NULL, NULL::date, NULL::date, NULL::date, NULL, 0::numeric),
-    (3, 'Isabel Navarro','09980000003', 'maybunga.bliss1.sample03@example.com', 'Block 3 Lot 2, Maybunga Bliss 1, Maybunga, Pasig City', 'Elite 150 Mbps', DATE '2025-08-09', 15, 'Grace Period', 'Unpaid after due date', NULL::date, DATE '2026-11-30', NULL::date, NULL, 1598::numeric),
-    (4, 'Miguel Bautista','09980000004','maybunga.bliss1.sample04@example.com', 'Block 4 Lot 6, Maybunga Bliss 1, Maybunga, Pasig City', 'Premium 220 Mbps', DATE '2025-11-18', 20, 'Under Review', 'Flagged for account review', DATE '2026-11-10', NULL::date, NULL::date, NULL, 1450::numeric),
-    (5, 'Clara Reyes',   '09980000005', 'maybunga.bliss1.sample05@example.com', 'Block 5 Lot 1, Maybunga Bliss 1, Maybunga, Pasig City', 'LiteSpeed 50Mbps', DATE '2025-12-03', 25, 'Terminated',   'Non-payment', NULL::date, NULL::date, DATE '2026-09-12', 'Non-payment', 799::numeric),
-    (6, 'Mateo Cruz',    '09980000006', 'maybunga.bliss1.sample06@example.com', 'Block 6 Lot 9, Maybunga Bliss 1, Maybunga, Pasig City', 'Turbo 110 Mbps', DATE '2026-01-17', 30, 'Active',       NULL, NULL::date, NULL::date, NULL::date, NULL, 0::numeric),
-    (7, 'Sofia Mendoza', '09980000007', 'maybunga.bliss1.sample07@example.com', 'Block 7 Lot 3, Maybunga Bliss 1, Maybunga, Pasig City', 'Elite 150 Mbps', DATE '2026-03-26', 7,  'Grace Period', 'Unpaid after due date', NULL::date, DATE '2026-11-28', NULL::date, NULL, 2598::numeric),
-    (8, 'Lucas Torres',  '09980000008', 'maybunga.bliss1.sample08@example.com', 'Block 8 Lot 5, Maybunga Bliss 1, Maybunga, Pasig City', 'Premium 220 Mbps', DATE '2026-05-08', 12, 'Under Review', 'Flagged for account review', DATE '2026-11-15', NULL::date, NULL::date, NULL, 1450::numeric),
-    (9, 'Nina Ramos',    '09980000009', 'maybunga.bliss1.sample09@example.com', 'Block 9 Lot 7, Maybunga Bliss 1, Maybunga, Pasig City', 'LiteSpeed 50Mbps', DATE '2026-06-19', 17, 'Terminated',   'Client cancellation', NULL::date, NULL::date, DATE '2026-10-21', 'Client cancellation', 0::numeric),
-    (10,'Gabriel Flores','09980000010', 'maybunga.bliss1.sample10@example.com', 'Block 10 Lot 2, Maybunga Bliss 1, Maybunga, Pasig City', 'Turbo 110 Mbps', DATE '2026-08-24', 22, 'Active',       NULL, NULL::date, NULL::date, NULL::date, NULL, 0::numeric)
+    (1, 'Daniel Radcliffe', '09980000001', 'fibertec.demo.dradcliffe@gmail.com', 'Block 1 Lot 4, Maybunga Bliss 1, Maybunga, Pasig City', 'LiteSpeed 50Mbps', DATE '2025-01-14', 25, 'Active',       NULL, NULL::date, NULL::date, NULL::date, NULL, 499::numeric),
+    (2, 'Emma Watson',      '09980000002', 'fibertec.demo.ewatson@gmail.com',    'Block 2 Lot 8, Maybunga Bliss 1, Maybunga, Pasig City', 'Turbo 110 Mbps', DATE '2025-04-22', 10, 'Active',       NULL, NULL::date, NULL::date, NULL::date, NULL, 0::numeric),
+    (3, 'Rupert Grint',     '09980000003', 'fibertec.demo.rgrint@gmail.com',     'Block 3 Lot 2, Maybunga Bliss 1, Maybunga, Pasig City', 'Elite 150 Mbps', DATE '2025-08-09', 20, 'Grace Period', 'Unpaid after due date', NULL::date, DATE '2026-11-25', NULL::date, NULL, 1299::numeric),
+    (4, 'Tom Felton',       '09980000004', 'fibertec.demo.tfelton@gmail.com',    'Block 4 Lot 6, Maybunga Bliss 1, Maybunga, Pasig City', 'Premium 220 Mbps', DATE '2025-11-18', 12, 'Under Review', 'Flagged for account review', DATE '2026-11-23', NULL::date, NULL::date, NULL, 1450::numeric),
+    (5, 'Bonnie Wright',    '09980000005', 'fibertec.demo.bwright@gmail.com',    'Block 5 Lot 1, Maybunga Bliss 1, Maybunga, Pasig City', 'LiteSpeed 50Mbps', DATE '2025-12-03', 25, 'Terminated',   'Non-payment', NULL::date, NULL::date, DATE '2026-09-12', 'Non-payment', 799::numeric),
+    (6, 'Matthew Lewis',    '09980000006', 'fibertec.demo.mlewis@gmail.com',     'Block 6 Lot 9, Maybunga Bliss 1, Maybunga, Pasig City', 'Turbo 110 Mbps', DATE '2026-01-17', 30, 'Active',       NULL, NULL::date, NULL::date, NULL::date, NULL, 0::numeric),
+    (7, 'Evanna Lynch',     '09980000007', 'fibertec.demo.elynch@gmail.com',     'Block 7 Lot 3, Maybunga Bliss 1, Maybunga, Pasig City', 'Elite 150 Mbps', DATE '2026-03-26', 20, 'Grace Period', 'Unpaid after due date', NULL::date, DATE '2026-11-25', NULL::date, NULL, 1299::numeric),
+    (8, 'Alan Rickman',     '09980000008', 'fibertec.demo.arickman@gmail.com',   'Block 8 Lot 5, Maybunga Bliss 1, Maybunga, Pasig City', 'Premium 220 Mbps', DATE '2026-05-08', 12, 'Under Review', 'Flagged for account review', DATE '2026-11-23', NULL::date, NULL::date, NULL, 1450::numeric),
+    (9, 'Maggie Smith',     '09980000009', 'fibertec.demo.msmith@gmail.com',    'Block 9 Lot 7, Maybunga Bliss 1, Maybunga, Pasig City', 'LiteSpeed 50Mbps', DATE '2026-06-19', 17, 'Terminated',   'Client cancellation', NULL::date, NULL::date, DATE '2026-10-21', 'Client cancellation', 0::numeric),
+    (10,'Robbie Coltrane',  '09980000010', 'fibertec.demo.rcoltrane@gmail.com',  'Block 10 Lot 2, Maybunga Bliss 1, Maybunga, Pasig City', 'Turbo 110 Mbps', DATE '2026-08-24', 22, 'Active',       NULL, NULL::date, NULL::date, NULL::date, NULL, 0::numeric)
 ),
 branch_seq AS (
-  SELECT COALESCE(MAX(client_seq), 0) AS max_seq
-    FROM clients WHERE branch_code = '05'
+  SELECT COALESCE(MAX(c.client_seq), 0) AS max_seq
+    FROM clients c
+   WHERE c.branch_code = '05'
+     AND NOT EXISTS (SELECT 1 FROM sample_data d WHERE d.email = c.email)
 )
 SELECT ('05' || TO_CHAR(s.registered_date, 'YY') || LPAD((b.max_seq + s.sample_no)::text, 4, '0')) AS account_no,
        (b.max_seq + s.sample_no)::smallint AS client_seq,
        s.*
   FROM sample_data s CROSS JOIN branch_seq b
+;
+
+CREATE TEMP TABLE maybunga_bliss1_samples ON COMMIT DROP AS
+SELECT s.*
+  FROM maybunga_bliss1_sample_data s
  WHERE NOT EXISTS (SELECT 1 FROM clients c WHERE c.email = s.email);
 
 -- Run `npm run seed` after this migration to replace the standard bcrypt placeholders.
@@ -155,5 +162,134 @@ SELECT s.account_no, u.user_id, '05', s.client_seq, p.plan_id, s.name, s.contact
   FROM maybunga_bliss1_samples s
   JOIN users u ON u.login_id = s.account_no AND u.role = 'client'
   JOIN plans p ON p.plan_name = s.plan_name;
+
+UPDATE clients c
+   SET plan_id = p.plan_id,
+       name = s.name,
+       contact_no = s.contact_no,
+       address = s.address,
+       registered_date = s.registered_date,
+       due_day = s.due_day,
+       status = s.status,
+       status_reason = s.status_reason,
+       flagged_date = s.flagged_date,
+       grace_end_date = s.grace_end_date,
+       termination_date = s.termination_date,
+       termination_reason = s.termination_reason,
+       current_balance = s.current_balance
+  FROM maybunga_bliss1_sample_data s
+  JOIN plans p ON p.plan_name = s.plan_name
+ WHERE c.email = s.email AND c.branch_code = '05';
+
+CREATE TEMP TABLE maybunga_bliss1_billing ON COMMIT DROP AS
+WITH billing_seed (
+  sample_no, billing_month, bill_date, due_date, amount, amount_paid, balance,
+  payment_status, payment_amount, method, payment_type, reference_no, or_no, payment_date
+) AS (
+  VALUES
+    (1, DATE '2026-11-01', DATE '2026-11-18', DATE '2026-11-25',  799::numeric, 300::numeric,  499::numeric, 'Partially paid', 300::numeric, 'GCash', 'Partial payment', '9000000000001', NULL::text, DATE '2026-11-20'),
+    (2, DATE '2026-11-01', DATE '2026-11-03', DATE '2026-11-10',  999::numeric, 999::numeric,    0::numeric, 'Paid',          999::numeric, 'Cash',  'Full payment',    NULL::text,       'OR-2026-050002', DATE '2026-11-09'),
+    (3, DATE '2026-11-01', DATE '2026-11-13', DATE '2026-11-20', 1299::numeric,   0::numeric, 1299::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
+    (4, DATE '2026-11-01', DATE '2026-11-05', DATE '2026-11-12', 1450::numeric,   0::numeric, 1450::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
+    (5, DATE '2026-08-01', DATE '2026-08-18', DATE '2026-08-25',  799::numeric,   0::numeric,  799::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
+    (6, DATE '2026-11-01', DATE '2026-11-23', DATE '2026-11-30',  999::numeric, 999::numeric,    0::numeric, 'Paid',          999::numeric, 'GCash', 'Full payment',    '9000000000006', NULL::text, DATE '2026-11-24'),
+    (7, DATE '2026-11-01', DATE '2026-11-13', DATE '2026-11-20', 1299::numeric,   0::numeric, 1299::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
+    (8, DATE '2026-11-01', DATE '2026-11-05', DATE '2026-11-12', 1450::numeric,   0::numeric, 1450::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
+    (9, DATE '2026-10-01', DATE '2026-10-10', DATE '2026-10-17',  799::numeric, 799::numeric,    0::numeric, 'Paid',          799::numeric, 'Cash',  'Full payment',    NULL::text,       'OR-2026-050009', DATE '2026-10-19'),
+    (10,DATE '2026-11-01', DATE '2026-11-15', DATE '2026-11-22',  999::numeric, 999::numeric,    0::numeric, 'Paid',          999::numeric, 'GCash', 'Full payment',    '9000000000010', NULL::text, DATE '2026-11-20')
+)
+SELECT c.account_no, c.client_seq, b.*
+  FROM maybunga_bliss1_sample_data s
+  JOIN clients c ON c.email = s.email AND c.branch_code = '05'
+  JOIN billing_seed b ON b.sample_no = s.sample_no;
+
+DELETE FROM payments p
+ USING statements old, maybunga_bliss1_billing seed
+ WHERE p.statement_id = old.statement_id
+   AND old.account_no = seed.account_no
+   AND old.billing_month = seed.billing_month;
+
+DELETE FROM statements old
+ USING maybunga_bliss1_billing seed
+ WHERE old.account_no = seed.account_no
+   AND old.billing_month = seed.billing_month;
+
+INSERT INTO statements (
+  invoice_no, account_no, billing_month, bill_date, due_date,
+  amount, amount_paid, balance, payment_status
+)
+SELECT 'B1 - ' || TO_CHAR(seed.billing_month, 'YYMM') || ' - ' || LPAD(seed.client_seq::text, 4, '0'),
+       seed.account_no, seed.billing_month, seed.bill_date, seed.due_date,
+       seed.amount, seed.amount_paid, seed.balance, seed.payment_status
+  FROM maybunga_bliss1_billing seed;
+
+UPDATE clients c
+   SET current_balance = seed.balance
+  FROM maybunga_bliss1_billing seed
+ WHERE c.account_no = seed.account_no;
+
+INSERT INTO payments (
+  statement_id, account_no, amount, method, payment_type, reference_no, or_no,
+  status, verified_by_staff, verified_at, payment_date, created_at
+)
+SELECT st.statement_id, seed.account_no, seed.payment_amount, seed.method, seed.payment_type,
+       seed.reference_no, seed.or_no, 'Verified', staff.user_id,
+       (seed.payment_date::timestamp + INTERVAL '12 hours') AT TIME ZONE 'Asia/Manila',
+       seed.payment_date,
+       (seed.payment_date::timestamp + INTERVAL '12 hours') AT TIME ZONE 'Asia/Manila'
+  FROM maybunga_bliss1_billing seed
+  JOIN statements st ON st.account_no = seed.account_no AND st.billing_month = seed.billing_month
+  JOIN users staff_user ON staff_user.login_id = 'maybungabliss1' AND staff_user.role = 'staff'
+  JOIN staff ON staff.user_id = staff_user.user_id
+ WHERE seed.payment_amount > 0;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM clients WHERE branch_code = '04') THEN
+    RAISE EXCEPTION 'Branch 04 must be empty; run database/clear_maybunga_bliss3.sql before this seed migration.';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM maybunga_bliss1_billing seed
+      JOIN clients c USING (account_no)
+      JOIN statements s ON s.account_no = seed.account_no AND s.billing_month = seed.billing_month
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
+          FROM payments p
+         WHERE p.statement_id=s.statement_id AND p.status='Verified'
+      ) v ON TRUE
+     WHERE s.amount_paid <> v.verified_paid
+        OR s.balance <> GREATEST(s.amount - v.verified_paid, 0)
+        OR c.current_balance <> seed.balance
+        OR s.payment_status <> CASE WHEN v.verified_paid >= s.amount THEN 'Paid'
+                                    WHEN v.verified_paid > 0 THEN 'Partially paid'
+                                    ELSE 'Unpaid' END
+  ) THEN
+    RAISE EXCEPTION 'Maybunga Bliss 1 sample statements, payments, and balances do not reconcile.';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM clients c
+     WHERE c.email LIKE 'fibertec.demo.%@gmail.com'
+       AND c.status = 'Terminated'
+       AND c.current_balance > 0
+       AND NOT EXISTS (
+         SELECT 1
+           FROM statements s
+          WHERE s.account_no = c.account_no
+            AND s.payment_status = 'Unpaid'
+            AND s.balance > 0
+            AND s.due_date < c.termination_date
+            AND s.amount > COALESCE((
+              SELECT SUM(p.amount) FROM payments p
+               WHERE p.statement_id = s.statement_id AND p.status = 'Verified'
+            ), 0)
+       )
+  ) THEN
+    RAISE EXCEPTION 'A terminated Maybunga Bliss 1 sample with a balance lacks an overdue unpaid statement.';
+  END IF;
+END $$;
 
 COMMIT;

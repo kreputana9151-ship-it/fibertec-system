@@ -99,7 +99,11 @@ async function syncAdminData() {
       plan: c.plan_name,
       facebook: c.facebook || "",
       router_location: c.router_location || "",
+      current_balance: Number(c.current_balance || 0),
       outstanding_balance: Number(c.outstanding_balance || 0),
+      payment_status: c.payment_status || "—",
+      has_pending_payment: !!c.has_pending_payment,
+      current_due_date: c.current_due_date || "",
       status: c.status,
       status_reason: c.status_reason || "",
       due_day: c.due_day,
@@ -110,7 +114,7 @@ async function syncAdminData() {
       created_month: c.created_month || String(c.registered_date || c.created_at || c.installed_date || "").slice(0, 7),
       terminated_month: c.status === "Terminated" ? (c.terminated_month || String(c.termination_date || c.updated_at || "").slice(0, 7)) : "",
       email: c.email || "",
-      address: c.address || c.branch + " Service Area",
+      address: c.address || "",
       short: c.plan_name,
       rate: Number(c.monthly_rate || 0)
     };
@@ -125,8 +129,8 @@ async function syncAdminData() {
       name: s.name || s.account_no,
       branch: branchNameForCode(s.branch_code),
       branch_code: s.branch_code,
-      plan: "Fiber Plan",
-      status: "Active",
+      plan: "",
+      status: "—",
       created_month: "",
       terminated_month: "",
       email: "",
@@ -144,7 +148,7 @@ async function syncAdminData() {
       amount: Number(s.amount || 0),
       paid: Number(s.amount_paid || 0),
       balance: Number(s.balance || 0),
-      pay: s.payment_status || "Unpaid",
+      pay: s.payment_status || "—",
       send: s.send_status || "Not Yet Sent"
     };
   });
@@ -162,10 +166,10 @@ async function syncAdminData() {
       date: dt,
       month: dt.slice(0, 7),
       amount: Number(p.amount || p.amount_paid || 0),
-      method: p.payment_method || p.method || "GCash",
+      method: p.payment_method || p.method || "",
       ref: p.reference_no || p.ref_no || "",
       or: p.or_no || p.official_receipt || "",
-      status: p.status || "Pending"
+      status: p.status || "—"
     };
   });
 

@@ -10,13 +10,29 @@ const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
 // GET /api/client/me  -> account overview (dates are sent as plain YYYY-MM-DD text, no time-zone shifting)
 router.get('/me', wrap(async (req, res) => {
   const { rows } = await query(
-    `SELECT c.account_no, c.name, c.email, c.contact_no, c.address, c.status, c.current_balance, c.status_reason, c.router_location, c.due_day,
+    `SELECT c.account_no, c.name, c.email, c.contact_no, c.address, c.status,
+            COALESCE(latest.balance, 0) AS current_balance, latest.payment_status,
+            c.status_reason, c.router_location, c.due_day,
             c.registered_date::text AS registered_date, c.grace_end_date::text AS grace_end_date,
             p.plan_name, p.monthly_rate, b.name AS branch,
             EXISTS (SELECT 1 FROM payments y WHERE y.account_no = c.account_no AND y.status = 'Pending') AS has_pending,
             (SELECT row_to_json(r) FROM (SELECT status, request_date::text AS request_date FROM cancellation_requests
               WHERE account_no = c.account_no ORDER BY request_id DESC LIMIT 1) r) AS cancel
        FROM clients c JOIN plans p USING (plan_id) JOIN branches b USING (branch_code)
+       LEFT JOIN LATERAL (
+         SELECT GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance,
+                CASE WHEN COALESCE(v.verified_paid, 0) >= s.amount THEN 'Paid'
+                     WHEN COALESCE(v.verified_paid, 0) > 0 THEN 'Partially paid'
+                     ELSE 'Unpaid' END AS payment_status
+           FROM statements s
+           LEFT JOIN LATERAL (
+             SELECT COALESCE(SUM(pm.amount), 0) AS verified_paid
+               FROM payments pm
+              WHERE pm.statement_id=s.statement_id AND pm.status='Verified'
+           ) v ON TRUE
+          WHERE s.account_no=c.account_no
+          ORDER BY s.billing_month DESC LIMIT 1
+       ) latest ON TRUE
       WHERE c.account_no = $1`, [req.user.accountNo]);
   res.json(rows[0]);
 }));
@@ -24,8 +40,20 @@ router.get('/me', wrap(async (req, res) => {
 // the history endpoints read the 3-month VIEWS (older data is hidden from clients)
 router.get('/statements', wrap(async (req, res) => {
   const { rows } = await query(
-    `SELECT statement_id, invoice_no, billing_month::text, bill_date::text, due_date::text, amount, amount_paid, balance, payment_status
-       FROM v_client_statements WHERE account_no=$1 ORDER BY billing_month DESC`, [req.user.accountNo]);
+    `SELECT s.statement_id, s.invoice_no, s.billing_month::text, s.bill_date::text, s.due_date::text, s.amount,
+            s.payment_status AS stored_payment_status,
+            COALESCE(v.verified_paid, 0) AS amount_paid,
+            GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance,
+            CASE WHEN COALESCE(v.verified_paid, 0) >= s.amount THEN 'Paid'
+                 WHEN COALESCE(v.verified_paid, 0) > 0 THEN 'Partially paid'
+                 ELSE 'Unpaid' END AS payment_status
+       FROM v_client_statements s
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
+           FROM payments p
+          WHERE p.statement_id=s.statement_id AND p.status='Verified'
+       ) v ON TRUE
+      WHERE s.account_no=$1 ORDER BY s.billing_month DESC`, [req.user.accountNo]);
   res.json(rows);
 }));
 router.get('/payments', wrap(async (req, res) => {
@@ -75,16 +103,29 @@ router.post('/payments', wrap(async (req, res) => {
   if (/\s/.test(referenceNo)) return res.status(400).json({ error: 'GCash reference must not contain whitespace.' });
   if (!/^[0-9]{13}$/.test(referenceNo)) return res.status(400).json({ error: 'GCash reference must be 13 digits' });
 
-  const s = (await query('SELECT * FROM statements WHERE statement_id=$1 AND account_no=$2', [statementId, req.user.accountNo])).rows[0];
+  const s = (await query(
+    `SELECT s.*, COALESCE(v.verified_paid, 0) AS verified_paid,
+            GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS remaining_balance
+       FROM statements s
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
+           FROM payments p
+          WHERE p.statement_id=s.statement_id AND p.status='Verified'
+       ) v ON TRUE
+      WHERE s.statement_id=$1 AND s.account_no=$2`, [statementId, req.user.accountNo])).rows[0];
   if (!s) return res.status(404).json({ error: 'Statement not found' });
-  if (Number(s.balance) <= 0) return res.status(400).json({ error: 'Already fully paid' });
+  const remainingBalance = Number(s.remaining_balance);
+  const verifiedPaid = Number(s.verified_paid);
+  const partialStatement = verifiedPaid > 0 || String(s.payment_status).toLowerCase() === 'partially paid';
+  if (remainingBalance <= 0) return res.status(400).json({ error: 'Already fully paid' });
   if ((await query("SELECT 1 FROM payments WHERE account_no=$1 AND status='Pending'", [req.user.accountNo])).rowCount)
     return res.status(409).json({ error: 'You already have a payment waiting for staff verification' });
 
   const amt = Number(amount);
-  if (!(amt > 0) || amt > Number(s.balance)) return res.status(400).json({ error: 'Invalid amount' });
+  if (!(amt > 0) || amt > remainingBalance) return res.status(400).json({ error: 'Invalid amount' });
   const pastDue = new Date(s.due_date) < new Date(new Date().toDateString());
-  const isFull = amt === Number(s.balance);
+  const isFull = amt === remainingBalance;
+  if (partialStatement && !isFull) return res.status(400).json({ error: 'A partially paid statement requires full payment of its remaining balance.' });
   if (pastDue && !isFull) return res.status(400).json({ error: 'After the due date the full balance is required' });
 
   try {

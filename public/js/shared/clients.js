@@ -38,80 +38,65 @@ function getLiveBillingSummary(accountNo, fallbackRate) {
     return (b.month || b.due || "").localeCompare(a.month || a.due || "");
   });
   var latest = stmts[0];
-
-  var totalBilled = 0;
-  var totalPaidFromStmts = 0;
-  stmts.forEach(function (s) {
-    totalBilled += Number(s.amount || 0);
-    totalPaidFromStmts += Number(s.paid || 0);
-  });
-
-  var totalVerifiedPays = 0;
-  var hasPending = false;
+  var totalVerifiedPays = 0, hasPending = false;
   pays.forEach(function (p) {
+    if (String(p.statement_id) != String(latest.id)) return;
     if (p.status === "Verified") totalVerifiedPays += Number(p.amount || 0);
     if (p.status === "Pending") hasPending = true;
   });
 
-  var effectivePaid = Math.max(totalPaidFromStmts, totalVerifiedPays);
-  var balance = Math.max(0, totalBilled - effectivePaid);
-  var latestBalance = Math.max(0, Number(latest.amount || 0) - Number(latest.paid || 0));
-
-  var payStatus = "Paid";
-  if (balance > 0 && latestBalance > 0) {
-    payStatus = hasPending ? "Pending" : (effectivePaid > 0 && latest.paid > 0 ? "Partial" : "Unpaid");
-  }
+  var effectivePaid = Math.max(Number(latest.paid || 0), totalVerifiedPays);
+  var balance = Math.max(0, Number(latest.amount || 0) - effectivePaid);
+  var payStatus = balance <= 0 ? "Paid" : hasPending ? "Pending" : effectivePaid > 0 ? "Partially paid" : "Unpaid";
 
   return {
     latest: latest,
     dueISO: latest.due || "",
     pay: payStatus,
-    balance: balance
+    balance: balance,
+    paid: effectivePaid
   };
 }
 
 function getAllActiveClients() {
   if (isAdmin() && typeof LIVE !== "undefined" && LIVE.loaded && Array.isArray(LIVE.clients)) {
     return LIVE.clients.map(function (c) {
-      var base = (typeof clientByNo === "function" ? clientByNo(c.no) : null) || {};
       var liveBill = getLiveBillingSummary(c.no, c.rate);
 
-      var graceEnd = c.grace_end_date || base.graceEnd || "";
-      var graceLeft = base.graceLeft || 0;
+      var graceEnd = c.grace_end_date || "";
+      var graceLeft = 0;
       if (graceEnd) {
         var diffMs = new Date(String(graceEnd).slice(0, 10) + "T23:59:59+08:00") - new Date();
         graceLeft = Math.max(0, Math.ceil(diffMs / 86400000));
       }
-      var balance = c.status === "Terminated" && c.outstanding_balance != null
-        ? Number(c.outstanding_balance)
-        : (liveBill ? liveBill.balance : 0);
+      var balance = liveBill ? liveBill.balance : Number(c.outstanding_balance || c.current_balance || 0);
 
-      return Object.assign({}, base, {
+      return {
         no: c.no,
         name: c.name,
-        contact: c.contact || base.contact || "",
-        email: c.email || base.email || "",
+        contact: c.contact || "",
+        email: c.email || "",
         branch: c.branch,
-        plan: c.plan || base.plan || "LiteSpeed 50Mbps",
-        rate: Number(c.rate || base.rate || 0),
+        plan: c.plan || "",
+        rate: Number(c.rate || 0),
         status: c.status,
-        due: Number(c.due_day || base.due || 15),
-        dueISO: liveBill ? liveBill.dueISO : "",
-        pay: c.status === "Terminated" && c.outstanding_balance != null
-          ? (balance <= 0 ? "Paid" : "Unpaid")
-          : (liveBill ? liveBill.pay : "Paid"),
+        due: Number(c.due_day || 0),
+        dueISO: liveBill ? liveBill.dueISO : (c.current_due_date || ""),
+        pay: c.status == "Terminated"
+          ? (balance > 0 ? "Unpaid" : (liveBill ? "Paid" : (c.payment_status || "—")))
+          : (liveBill ? liveBill.pay : (c.payment_status || "—")),
         balance: balance,
         graceEnd: graceEnd,
         graceLeft: graceLeft,
-        reason: c.status_reason || base.reason || "Overdue Balance",
-        flagged: c.flagged_date || base.flagged || "",
+        reason: c.status_reason || "",
+        flagged: c.flagged_date || "",
         termDate: c.termination_date ? String(c.termination_date).slice(0, 10) : "",
-        termReason: c.termination_reason || c.status_reason || base.termReason || "Terminated",
+        termReason: c.termination_reason || c.status_reason || "",
         installed: c.registered_date ? String(c.registered_date).slice(0, 10) : "",
-        address: c.address || base.address || "",
+        address: c.address || "",
         fb: c.facebook || "",
         device: c.router_location || ""
-      });
+      };
     });
   }
 
@@ -127,40 +112,37 @@ async function syncStaffClients() {
   try {
     var rows = await apiCall("GET", "/api/staff/clients");
     LIVE_STAFF_CLIENTS = rows.map(function (r) {
-      var base = (typeof clientByNo === "function" ? clientByNo(r.account_no) : null) || {};
-      var graceEnd = r.grace_end_date || base.graceEnd || "";
-      var graceLeft = base.graceLeft || 0;
+      var graceEnd = r.grace_end_date || "";
+      var graceLeft = 0;
       if (graceEnd) {
         var diffMs = new Date(String(graceEnd).slice(0, 10) + "T23:59:59+08:00") - new Date();
         graceLeft = Math.max(0, Math.ceil(diffMs / 86400000));
       }
-      var outstanding = r.outstanding_balance != null ? Number(r.outstanding_balance) : Number(base.balance || 0);
-      return Object.assign({}, base, {
+      var outstanding = r.outstanding_balance != null ? Number(r.outstanding_balance) : Number(r.current_balance || 0);
+      return {
         no: r.account_no,
         name: r.name,
-        contact: r.contact_no || base.contact || "",
-        email: r.email || base.email || "",
-        branch: STAFF_BRANCH || base.branch || "",
-        plan: r.plan_name || base.plan || "LiteSpeed 50Mbps",
-        rate: Number(r.monthly_rate || base.rate || 0),
-        balance: r.status === "Terminated" ? outstanding : (r.current_balance != null ? Number(r.current_balance) : Number(base.balance || 0)),
+        contact: r.contact_no || "",
+        email: r.email || "",
+        branch: STAFF_BRANCH || "",
+        plan: r.plan_name || "",
+        rate: Number(r.monthly_rate || 0),
+        balance: outstanding,
         status: r.status || "Active",
-        due: Number(r.due_day || base.due || 15),
-        dueISO: base.dueISO || "",
-        pay: r.status === "Terminated"
-          ? (outstanding <= 0 ? "Paid" : "Unpaid")
-          : (base.pay || "Paid"),
+        due: Number(r.due_day || 0),
+        dueISO: r.current_due_date || "",
+        pay: r.payment_status || (outstanding > 0 ? "Unpaid" : "—"),
         graceEnd: graceEnd,
         graceLeft: graceLeft,
-        reason: r.status_reason || base.reason || "Client Cancellation Request",
-        flagged: r.flagged_date || base.flagged || "",
+        reason: r.status_reason || "",
+        flagged: r.flagged_date || "",
         termDate: r.termination_date ? String(r.termination_date).slice(0, 10) : "",
-        termReason: r.termination_reason || r.status_reason || base.termReason || "",
+        termReason: r.termination_reason || r.status_reason || "",
         installed: r.registered_date ? String(r.registered_date).slice(0, 10) : "",
-        address: r.address || base.address || "",
+        address: r.address || "",
         fb: r.facebook || "",
         device: r.router_location || ""
-      });
+      };
     });
     LIVE_STAFF_LOADED = true;
   } catch (e) {
@@ -201,10 +183,10 @@ function clientCols(tab) {
   var act = isAdmin(), take = function (c) { return "<button class='action review' onclick='event.stopPropagation();reviewClient(\"" + c.no + "\")'>Take Action</button>"; };
   var cols = {
     "All": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Contact No.", function (c) { return esc(c.contact || "—"); }], ["Email", function (c) { return esc(c.email || "—"); }], ["Branch", function (c) { return esc(c.branch); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Status", function (c) { return badgeFor(c.status); }]],
-    "Active": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Branch", function (c) { return esc(c.branch); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Monthly Rate", function (c) { return peso(c.rate); }], ["Due Date", function (c) { return c.dueISO ? safeFmtD(c.dueISO, 1) : ("Every " + ordinal(c.due || 15)); }], ["Payment Status", function (c) { return badgeFor(c.pay || "Paid"); }]],
+    "Active": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Branch", function (c) { return esc(c.branch); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Monthly Rate", function (c) { return peso(c.rate); }], ["Due Date", function (c) { return c.dueISO ? safeFmtD(c.dueISO, 1) : ("Every " + ordinal(c.due || 15)); }], ["Payment Status", function (c) { return badgeFor(c.pay || "—"); }]],
     "Grace Period": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Monthly Rate", function (c) { return peso(c.rate); }], ["Outstanding Balance", function (c) { return peso(c.balance); }], ["Grace Period Ends", function (c) { return safeFmtD(c.graceEnd); }], ["Days Remaining", function (c) { return "<b>" + c.graceLeft + " Day" + (c.graceLeft == 1 ? "" : "s") + " Left</b>"; }]],
     "Under Review": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Branch", function (c) { return esc(c.branch); }], ["Outstanding Balance", function (c) { return peso(c.balance); }], ["Reason", function (c) { return esc(c.reason); }], ["Date Flagged", function (c) { return safeFmtD(c.flagged); }]],
-    "Terminated": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Outstanding Balance", function (c) { return peso(c.balance); }], ["Termination Date", function (c) { return safeFmtD(c.termDate); }], ["Payment Status", function (c) { return badgeFor(c.pay || "Unpaid"); }]]
+    "Terminated": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Outstanding Balance", function (c) { return peso(c.balance); }], ["Termination Date", function (c) { return safeFmtD(c.termDate); }], ["Payment Status", function (c) { return badgeFor(c.pay || "—"); }]]
   }[tab];
   if (act && tab == "Under Review") cols.push(["Action", take]);
   if (act && tab == "Terminated") cols.push(["Action", function (c) { return "<button class='action' onclick='event.stopPropagation();reactivate(\"" + c.no + "\")'>Take Action</button>"; }]);
@@ -387,7 +369,7 @@ function viewClient(no) {
   var deviceLocation = String(c.device || "").trim() || "Standard indoor ONT placement";
   var s = liveBill && liveBill.latest
     ? { inv: liveBill.latest.inv || "—", bill: liveBill.latest.bill || c.installed || "", due: liveBill.latest.due || "", paid: liveBill.latest.paid || 0, amount: liveBill.latest.amount || c.rate || 0 }
-    : { inv: "—", bill: c.installed || "", due: c.dueISO || "", paid: 0, amount: c.rate || 0 };
+    : { inv: "—", bill: "", due: "", paid: 0, amount: 0 };
   var extra = "";
   if (c.status == "Under Review") extra = "<div class='cd-note'><div class='warn amber'><b>Under Review</b> &middot; " + esc(c.reason) + (c.flagged ? " &middot; flagged " + safeFmtD(c.flagged) : "") + (isAdmin() ? "" : ". Waiting for an administrator's decision.") + "</div></div>";
   if (c.status == "Terminated") extra = "<div class='cd-note'><div class='warn red'><b>Terminated</b>" + (c.termDate ? " on " + safeFmtD(c.termDate) : "") + " &middot; " + esc(c.termReason || "Non-Payment") + "</div></div>";
@@ -395,7 +377,7 @@ function viewClient(no) {
   modal2("<div class='cd-hero'><span class='avatar'>" + initials(c.name) + "</span><div><h2>" + esc(c.name) + "</h2><small>Account " + c.no + " &middot; " + esc(c.branch) + " Branch</small><div style='margin-top:8px'>" + badgeFor(c.status) + "</div></div>" +
     (isAdmin() ? "<button class='btn btn-light' onclick='editClient(\"" + c.no + "\")'>Edit Client</button>" : "") +
     "<button class='x dlg-x' style='background:none;border:0;color:#fff;font-size:28px;cursor:pointer' onclick='closeModal()'>&times;</button></div>" +
-    "<div class='cd-stats'><div class='cd-stat'><small>Plan</small><b>" + esc(c.plan.replace(/\s*Mbps/, " Mbps")) + "</b></div><div class='cd-stat'><small>Monthly rate</small><b>" + peso(c.rate) + "</b></div><div class='cd-stat'><small>Payment status</small><b>" + esc(c.pay || "Paid") + "</b></div><div class='cd-stat'><small>Balance</small><b>" + peso(c.balance || 0) + "</b></div></div>" + (extra ? "<div style='height:14px'></div>" + extra : "") +
+    "<div class='cd-stats'><div class='cd-stat'><small>Plan</small><b>" + esc(c.plan.replace(/\s*Mbps/, " Mbps")) + "</b></div><div class='cd-stat'><small>Monthly rate</small><b>" + peso(c.rate) + "</b></div><div class='cd-stat'><small>Payment status</small><b>" + esc(c.pay || "—") + "</b></div><div class='cd-stat'><small>Balance</small><b>" + peso(c.balance || 0) + "</b></div></div>" + (extra ? "<div style='height:14px'></div>" + extra : "") +
     "<div class='cd-grid'><div class='cd-sec'><h4>Records</h4>" + kv("Branch", esc(c.branch) + " Branch") + kv("Plan", "FiberTec " + esc(c.plan)) + kv("Installed date", safeFmtD(c.installed)) + kv("Monthly rate", peso(c.rate)) + kv("Payment due date", "Every " + ordinal(c.due || 15)) + "</div>" +
     "<div class='cd-sec'><h4>Address and contact</h4>" + kv("Address", esc(c.address || "—")) + kv("Contact no.", esc(c.contact || "—")) + kv("Email", esc(c.email || "—")) + kv("FB / Messenger", esc(c.fb || "—")) + "</div>" +
     "<div class='cd-sec'><h4>Current statement</h4>" + kv("Invoice no.", esc(s.inv)) + kv("Billing date", safeFmtD(s.bill)) + kv("Due date", safeFmtD(s.due)) + kv("Paid / due", peso(s.paid) + " / " + peso(s.amount)) + "</div>" +

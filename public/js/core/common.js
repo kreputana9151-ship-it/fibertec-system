@@ -71,7 +71,6 @@ function changeFirstPassword() {
   }).catch(function () { err.innerHTML = "Cannot reach the server. Please try again."; });
 }
 function logout() { sessionStorage.clear(); location.href = "index.html"; }
-function resetDemoData() { resetDemo(); $("error").innerHTML = ""; toast("Demo data was reset."); }
 function requireRole(role) { if (sessionStorage.getItem("fiberRole") == role) return true; location.replace("index.html"); return false; }
 function toggleSidebar() { $("layout").classList.toggle("collapsed"); }
 function showSection(ids, id, prefix) {

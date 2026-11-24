@@ -18,7 +18,15 @@ async function changeStatus(c, accountNo, newStatus, reason, userId, extra = {})
        termination_date=COALESCE($6::date, CASE WHEN $2::varchar(15)='Terminated' THEN (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date END),
        termination_reason=$7::varchar(60),
        current_balance=COALESCE(
-         (SELECT balance FROM statements WHERE account_no=$1::char(8) ORDER BY billing_month DESC LIMIT 1), 0)
+         (SELECT GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0)
+            FROM statements s
+            LEFT JOIN LATERAL (
+              SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
+                FROM payments p
+               WHERE p.statement_id=s.statement_id AND p.status='Verified'
+            ) v ON TRUE
+           WHERE s.account_no=$1::char(8)
+           ORDER BY s.billing_month DESC LIMIT 1), 0)
      WHERE account_no=$1::char(8)`,
     [accountNo, newStatus, reason, extra.flagged || null, extra.graceEnd || null,
      extra.termDate || null, extra.termReason || null]

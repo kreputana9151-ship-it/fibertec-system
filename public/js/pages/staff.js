@@ -24,10 +24,9 @@ function renderStaff() {
     ? rq.map(function (r) { return "<div class='q-row'><span><b>" + esc(r.name) + "</b> (" + r.acc + ")<small>Requested " + fmtD(r.date) + " &middot; " + esc(r.reason) + "</small></span><button class='btn btn-green' onclick='askRequest(\"" + r.id + "\",true)'>Approve</button><button class='btn btn-red' onclick='askRequest(\"" + r.id + "\",false)'>Reject</button></div>"; }).join("")
     : "<p class='empty'>No pending cancellation requests.</p>";
   $("req-count").innerHTML = rq.length;
-  /* recent activity: what staff just did first, then seeded history from the branch's records */
-  var dyn = S.act.filter(function (a) { return a.b == STAFF_BRANCH; }).reverse().map(function (a) { return { t: a.t, when: a.when }; });
-  var seed = PAY.activity.map(function (a) { return { t: a.description, when: fmtTs(a.logged_at) }; });
-  $("activity").innerHTML = dyn.concat(seed).slice(0, 9).map(function (a) { return "<div class='row-line'><span>" + esc(a.t) + "<small>" + a.when + "</small></span></div>"; }).join("") || "<p class='empty'>No activity yet...</p>";
+  /* recent activity is loaded from the branch-scoped API */
+  var activity = PAY.activity.map(function (a) { return { t: a.description, when: fmtTs(a.logged_at) }; });
+  $("activity").innerHTML = activity.slice(0, 9).map(function (a) { return "<div class='row-line'><span>" + esc(a.t) + "<small>" + a.when + "</small></span></div>"; }).join("") || "<p class='empty'>No activity yet...</p>";
   renderStaffPay();
 }
 function askRequest(id, ok) {
@@ -56,9 +55,21 @@ function notHead(id) {
   var h = PAY.queue[0]; if (h && String(h.payment_id) == String(id)) return false;
   toast("FIFO: please process Queue #1 (the oldest submission) first.", "error"); refreshPayments(); return true;
 }
+function paymentBreakdownHtml(total, previous, current) {
+  var remaining = Math.max(0, Number(total) - Number(previous) - Number(current));
+  return "<div class='payment-breakdown-row'><span>Statement total</span><b>" + peso(total) + "</b></div>" +
+    "<div class='payment-breakdown-row'><span>Previously verified</span><b>" + peso(previous) + "</b></div>" +
+    "<div class='payment-breakdown-row'><span>This payment</span><b>" + peso(current) + "</b></div>" +
+    "<div class='payment-breakdown-row'><span>Remaining after verification</span><b>" + peso(remaining) + "</b></div>";
+}
+function showPaymentReceipt(p, orNo) {
+  modal2("<div class='dlg-head'>Payment receipt<button class='x' onclick='closeModal()'>&times;</button></div><div class='dlg-body'>" +
+    "<p><b>" + esc(p.name) + "</b> (" + esc(p.account_no) + ")<br>O.R. No. <b>" + esc(orNo) + "</b></p>" +
+    "<div class='payment-breakdown'>" + paymentBreakdownHtml(p.statement_total, p.verified_paid, p.amount) + "</div></div>");
+}
 function askVerify(id) {
   if (notHead(id)) return; var p = queueItem(id);
-  confirmBox("Verify payment", "Please make sure the reference number matches the client's GCash receipt before you continue.<br><br><b>" + esc(p.name) + "</b> (" + p.account_no + ")<br>" + p.payment_type + " &middot; " + peso(p.amount) + "<br>Ref # <b>" + fmtRef(p.reference_no || "") + "</b><br><br>An official receipt (O.R.) will be issued automatically.<br><br>Do you want to verify this payment?", "Yes, verify", function () { doQueueAction(id, "verify"); });
+  confirmBox("Verify payment", "Please make sure the reference number matches the client's GCash receipt before you continue.<br><br><b>" + esc(p.name) + "</b> (" + p.account_no + ")<br>" + p.payment_type + " &middot; " + peso(p.amount) + "<br>Ref # <b>" + fmtRef(p.reference_no || "") + "</b><br><div class='payment-breakdown'>" + paymentBreakdownHtml(p.statement_total, p.verified_paid, p.amount) + "</div><br>An official receipt (O.R.) will be issued automatically.<br><br>Do you want to verify this payment?", "Yes, verify", function () { doQueueAction(id, "verify"); });
 }
 function rejectRef(id) {
   if (notHead(id)) return; var p = queueItem(id);
@@ -66,8 +77,10 @@ function rejectRef(id) {
 }
 function doQueueAction(id, act) {                                      // PATCH /api/staff/payments/:id/verify | reject
   if (BUSY) return; BUSY = true;
+  var p = queueItem(id);
   apiCall("PATCH", "/api/staff/payments/" + id + "/" + act).then(function (d) {
     toast(act == "verify" ? "Payment verified. O.R. issued: " + d.orNo : "Payment rejected.");
+    if (act == "verify" && p) showPaymentReceipt(p, d.orNo);
   }).catch(function (e) {
     if (e && e.status == 409) toast("Out of order: " + e.message + ". The queue was refreshed.", "error");     // someone else already served Queue #1
     else if (e && e.status != 401) toast((e && e.message) || "Could not save. Please try again.", "error");
@@ -100,18 +113,42 @@ function cashSearch() {
 function pickCash(id) {
   var s = CASH[id]; $("cash-client").value = id; $("cash-results").classList.add("hidden"); $("cash-search").value = ""; $("cash-search").classList.add("hidden");
   $("cash-picked").innerHTML = "<span><b>" + esc(s.name) + "</b><small>" + s.account_no + " &middot; " + pesoPlain(s.balance) + " due</small></span><button type='button' title='Change client' onclick='clearCash()'>&times;</button>"; $("cash-picked").classList.remove("hidden");
+  updateCashPreview();
 }
-function clearCash() { $("cash-client").value = ""; $("cash-picked").classList.add("hidden"); $("cash-search").classList.remove("hidden"); $("cash-search").value = ""; }
+function clearCash() { $("cash-client").value = ""; $("cash-picked").classList.add("hidden"); $("cash-search").classList.remove("hidden"); $("cash-search").value = ""; updateCashPreview(); }
+function cashFigures() {
+  var s = CASH[val("cash-client")]; if (!s) return null;
+  var total = Number(s.amount || 0), previous = Number(s.amount_paid || 0), remaining = Math.max(0, total - previous);
+  var partialOption = $("cash-type").options[1];
+  var partialAlreadyPaid = (previous > 0 || s.payment_status == "Partially paid" || s.stored_payment_status == "Partially paid") && remaining > 0;
+  partialOption.disabled = partialAlreadyPaid; partialOption.hidden = partialAlreadyPaid;
+  if (partialAlreadyPaid && val("cash-type") == "Partial payment") $("cash-type").value = "Full payment";
+  $("cash-type").options[0].textContent = partialAlreadyPaid ? "Full Payment (Remaining Balance)" : "Full payment";
+  var partial = val("cash-type") == "Partial payment", amount = partial ? Math.min(Number(s.monthly_rate) / 2, remaining) : remaining;
+  return { statement_total: total, verified_paid: previous, amount: amount };
+}
+function updateCashPreview() {
+  var box = $("cash-preview"), f = cashFigures();
+  if (!box) return;
+  if (!f) { box.innerHTML = ""; box.classList.add("hidden"); return; }
+  box.innerHTML = "<b class='payment-breakdown-title'>Receipt preview</b>" + paymentBreakdownHtml(f.statement_total, f.verified_paid, f.amount);
+  box.classList.remove("hidden");
+}
 function encodeCash() {
   var id = val("cash-client"); if (!id) { toast("Search and select a client first.", "error"); return; }
-  var s = CASH[id], partial = val("cash-type") == "Partial payment", amount = partial ? Math.min(Number(s.monthly_rate) / 2, Number(s.balance)) : Number(s.balance);
-  apiCall("POST", "/api/staff/payments/cash", { statementId: Number(id), amount: amount }).then(function (d) {
-    toast("Payment encoded. O.R. number issued: " + d.orNo); clearCash(); refreshPayments();
+  var s = CASH[id], figures = cashFigures();
+  if (!figures || !(figures.amount > 0)) { toast("The selected statement has no remaining balance.", "error"); return; }
+  apiCall("POST", "/api/staff/payments/cash", { statementId: Number(id), amount: figures.amount }).then(function (d) {
+    toast("Payment encoded. O.R. number issued: " + d.orNo);
+    showPaymentReceipt({ name: s.name, account_no: s.account_no, statement_total: figures.statement_total, verified_paid: figures.verified_paid, amount: figures.amount }, d.orNo);
+    clearCash(); refreshPayments();
   }).catch(function (e) { if (e && e.status != 401) toast((e && e.message) || "Could not encode the payment.", "error"); });
 }
 function startStaff() {
   $("staff-who").innerHTML = "Staff - " + STAFF_BRANCH; $("staff-av").innerHTML = "S" + (branchOf(STAFF_BRANCH).code.slice(1));
   fillSelect("sr-method", "All Methods", ["GCash", "Cash"]); fillSelect("sr-status", "All Statuses", ["Verified", "Rejected"]);
+  document.addEventListener("input", function (e) { if (e.target && e.target.id == "cash-type") updateCashPreview(); });
+  document.addEventListener("change", function (e) { if (e.target && e.target.id == "cash-type") updateCashPreview(); });
   initClientsView(); renderStaff(); startPolling();
 }
 if ($("t-verify") && requireRole("staff")) startStaff();

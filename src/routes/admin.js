@@ -45,13 +45,18 @@ const periodAnalyticsSql = `
   ),
   statement_totals AS (
     SELECT c.branch_code, COALESCE(SUM(s.amount),0) AS billed,
-           COALESCE(SUM(s.amount_paid),0) AS collected,
+           COALESCE(SUM(paid.verified_paid),0) AS collected,
            COUNT(s.statement_id)::int AS statement_count,
            COUNT(*) FILTER (WHERE s.send_status='Delivered')::int AS delivered_count
       FROM branch_scope b
       LEFT JOIN clients c USING (branch_code)
       LEFT JOIN statements s ON s.account_no=c.account_no
         AND ($1::text IS NULL OR TO_CHAR(s.billing_month, 'YYYY-MM')=$1)
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
+          FROM payments p
+         WHERE p.statement_id=s.statement_id AND p.status='Verified'
+      ) paid ON TRUE
      GROUP BY c.branch_code
   ),
   registration_totals AS (
@@ -185,21 +190,20 @@ router.get('/clients', async (req, res) => {
   try {
     const { rows } = await query(
       `SELECT c.account_no,
-              c.name,
-              c.contact_no,
-              c.address,
-              b.name AS branch,
-              c.plan_id,
-              p.plan_name,
-              p.monthly_rate,
-              c.current_balance,
-              COALESCE((
-                SELECT SUM(s.balance)
-                  FROM statements s
-                 WHERE s.account_no = c.account_no
-                   AND s.payment_status IN ('Unpaid', 'Partially paid')
-                   AND s.balance > 0
-              ), 0) AS outstanding_balance,
+                c.name,
+                c.contact_no,
+                c.address,
+                b.name AS branch,
+                c.plan_id,
+                p.plan_name,
+                p.monthly_rate,
+                COALESCE(latest.balance, 0) AS current_balance,
+                COALESCE(latest.balance, 0) AS outstanding_balance,
+                CASE WHEN c.status='Terminated' AND latest.balance IS NOT NULL
+                     THEN CASE WHEN latest.balance > 0 THEN 'Unpaid' ELSE 'Paid' END
+                     ELSE latest.payment_status END AS payment_status,
+                COALESCE(latest.has_pending_payment, FALSE) AS has_pending_payment,
+                TO_CHAR(latest.due_date, 'YYYY-MM-DD') AS current_due_date,
               c.status,
               c.status_reason,
               c.due_day,
@@ -217,6 +221,22 @@ router.get('/clients', async (req, res) => {
          FROM clients c
          JOIN branches b USING (branch_code)
          JOIN plans p USING (plan_id)
+         LEFT JOIN LATERAL (
+           SELECT s.due_date,
+                  GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) AS balance,
+                  CASE WHEN COALESCE(paid.verified_paid, 0) >= s.amount THEN 'Paid'
+                       WHEN COALESCE(paid.verified_paid, 0) > 0 THEN 'Partially paid'
+                       ELSE 'Unpaid' END AS payment_status,
+                  paid.has_pending_payment
+             FROM statements s
+             LEFT JOIN LATERAL (
+               SELECT COALESCE(SUM(pm.amount) FILTER (WHERE pm.status='Verified'), 0) AS verified_paid,
+                      COALESCE(BOOL_OR(pm.status='Pending'), FALSE) AS has_pending_payment
+                 FROM payments pm WHERE pm.statement_id=s.statement_id
+             ) paid ON TRUE
+            WHERE s.account_no=c.account_no
+            ORDER BY s.billing_month DESC LIMIT 1
+         ) latest ON TRUE
         WHERE ($1::text IS NULL OR c.branch_code=$1) AND ($2::text IS NULL OR c.status=$2)
         ORDER BY c.branch_code, c.client_seq`,
       [req.query.branch || null, req.query.status || null]
@@ -233,7 +253,19 @@ router.get('/statements', async (req, res) => {
   const month = selectedMonth(req.query.month);
   if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
   const { rows } = await query(
-    `SELECT s.*, c.name, c.branch_code FROM statements s JOIN clients c USING (account_no)
+    `SELECT s.statement_id, s.invoice_no, s.account_no, s.billing_month, s.bill_date, s.due_date, s.amount,
+            COALESCE(v.verified_paid, 0) AS amount_paid,
+            GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance,
+            CASE WHEN COALESCE(v.verified_paid, 0) >= s.amount THEN 'Paid'
+                 WHEN COALESCE(v.verified_paid, 0) > 0 THEN 'Partially paid'
+                 ELSE 'Unpaid' END AS payment_status,
+            s.send_status, s.sent_by_admin, s.sent_at, s.created_at, c.name, c.branch_code
+       FROM statements s JOIN clients c USING (account_no)
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
+           FROM payments p
+          WHERE p.statement_id=s.statement_id AND p.status='Verified'
+       ) v ON TRUE
       WHERE ($1::text IS NULL OR TO_CHAR(s.billing_month, 'YYYY-MM')=$1)
         AND ($2::text IS NULL OR c.branch_code=$2)
       ORDER BY s.billing_month DESC, s.account_no`, [month, req.query.branch || null]);

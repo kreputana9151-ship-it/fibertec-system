@@ -2,8 +2,18 @@
 var ME = null, STM = [], PAYS = [], NOTES = [], NOTIFS = [], CPAGES = ["home", "payment", "statement", "notifications"], selId = null, BUSYP = false, SEL_N = null, PREV_UNREAD = null;
 function todayISO() { return iso(new Date()); }
 function inBillingNow() { return ME.status == "Active" || ME.status == "Grace Period"; }
-function cur() { return STM[0] || { id: 0, inv: "-", bill: todayISO(), due: todayISO(), amount: 0, paid: 0, balance: 0 }; }
-function mapStmt(s) { return { id: s.statement_id, inv: s.invoice_no, bill: s.bill_date, due: s.due_date, amount: Number(s.amount), paid: Number(s.amount_paid), balance: Number(s.balance) }; }
+function verifiedPaid(s) {
+  var fromPayments = PAYS.filter(function (p) { return String(p.statement_id) == String(s.id) && p.status == "Verified"; })
+    .reduce(function (sum, p) { return sum + Number(p.amount || 0); }, 0);
+  return Math.max(Number(s.paid || 0), fromPayments);
+}
+function remainingBalance(s) { return Math.max(0, Number(s.amount || 0) - verifiedPaid(s)); }
+function cur() {
+  var s = STM[0] || { id: 0, inv: "-", bill: todayISO(), due: todayISO(), amount: 0, paid: 0, balance: 0 };
+  s.paid = verifiedPaid(s); s.balance = Math.max(0, Number(s.amount || 0) - s.paid);
+  return s;
+}
+function mapStmt(s) { return { id: s.statement_id, inv: s.invoice_no, bill: s.bill_date, due: s.due_date, amount: Number(s.amount), paid: Number(s.amount_paid), balance: Number(s.balance), pay: s.payment_status, partialLocked: Number(s.amount_paid) > 0 || String(s.stored_payment_status || s.payment_status || "").toLowerCase() == "partially paid" }; }
 function cycleLabel(s) {
   if (!STM.length) return "No statement yet"; if (s.balance == 0) return "Paid"; if (ME.hasPending) return "Awaiting verification"; if (s.paid > 0) return "Partially paid";
   var d = dayDiff(s.due, todayISO()); return d == 0 ? "Due today" : d > 0 ? "Due in " + d + " day" + (d == 1 ? "" : "s") : "Overdue";
@@ -52,12 +62,32 @@ function renderClient() {
   var h = myHistory(); $("recent").innerHTML = histRows(h.slice(0, 4)); $("history").innerHTML = histRows(h);
   $("p-acct").innerHTML = esc(s.inv); var pp = $("p-pill"); pp.className = "c-pill " + pillClass(label); pp.textContent = label;
   $("p-due").innerHTML = "Due " + fmtD(s.due) + " &nbsp; Paid " + peso(s.paid) + " of " + peso(s.amount); $("p-branch").innerHTML = esc(ME.branch);
-  $("paytype").style.display = canPayNow() ? "" : "none"; if (!canPayNow()) $("steps23").classList.add("hidden");
+  $("paytype").style.display = canPayNow() ? "" : "none";
+  updatePaymentOptions(s);
   $("p-blocked").innerHTML = !inBillingNow() ? "Payments are not available while your account is " + ME.status.toLowerCase() + "." : !STM.length ? "You have no statement yet." : ME.hasPending ? "Your payment is waiting for staff verification." : s.balance == 0 ? "You are fully paid for this statement. Thank you!" : "";
-  renderStatements(); renderNotifications();
+  renderStatements(); renderNotifications(); updatePay();
 }
-function payAmount() { var s = cur(); return val("paytype") == "partial" ? Math.min(ME.rate / 2, s.balance) : s.balance; }
-function updatePay() { var t = val("paytype"); $("steps23").classList.toggle("hidden", t == ""); $("partialnote").classList.toggle("hidden", t != "partial"); $("payamt").innerHTML = peso(payAmount()); }
+function updatePaymentOptions(s) {
+  var select = $("paytype"), full = select.querySelector("option[value='full']"), partial = select.querySelector("option[value='partial']");
+  var partialAlreadyPaid = (s.paid > 0 || s.partialLocked) && s.balance > 0;
+  partial.disabled = partialAlreadyPaid; partial.hidden = partialAlreadyPaid;
+  full.textContent = partialAlreadyPaid ? "Full Payment (Remaining Balance)" : "Full payment";
+  if (partialAlreadyPaid && select.value == "partial") select.value = "full";
+}
+function payAmount() { var s = cur(), remaining = remainingBalance(s); return val("paytype") == "partial" ? Math.min(Number(ME.rate) / 2, remaining) : remaining; }
+function updatePay() {
+  if (!ME) return;
+  var t = val("paytype"), s = cur(), enabled = canPayNow(), amount;
+  updatePaymentOptions(s);
+  t = val("paytype"); amount = t && enabled ? payAmount() : 0;
+  $("steps23").classList.toggle("hidden", !t || !enabled); $("partialnote").classList.toggle("hidden", t != "partial");
+  $("payamt").innerHTML = peso(amount); $("pay-total").innerHTML = peso(s.amount);
+  $("pay-previous").innerHTML = peso(s.paid); $("pay-current").innerHTML = peso(amount);
+  $("pay-remaining").innerHTML = peso(Math.max(0, Number(s.amount) - s.paid - amount));
+  $("partialnote").textContent = s.paid > 0 && s.balance > 0
+    ? "A partial payment has already been verified. Please pay the full remaining balance."
+    : "After staff verify your half. Once your account is in the grace period, the full amount is required.";
+}
 function cancelPay() { $("ref").value = ""; $("referr").innerHTML = ""; $("paytype").value = ""; updatePay(); }
 function submitPayment() {                                             // goes to the staff Payments Verification Queue
   var ref = val("ref"), t = val("paytype"), s = cur();
@@ -70,6 +100,8 @@ function submitPayment() {                                             // goes t
     .catch(function (e) { if (e && e.status != 401) $("referr").innerHTML = esc((e && e.message) || "Could not submit your payment. Please try again."); })
     .then(function () { BUSYP = false; renderClient(); });
 }
+document.addEventListener("input", function (e) { if (e.target && e.target.id == "paytype") updatePay(); });
+document.addEventListener("change", function (e) { if (e.target && e.target.id == "paytype") updatePay(); });
 
 /* ---------- Statements ---------- */
 function stmtStatus(s) { return s.id == cur().id ? (inBillingNow() ? cycleLabel(s) : ME.status) : (s.balance == 0 ? "Paid" : "Unpaid"); }

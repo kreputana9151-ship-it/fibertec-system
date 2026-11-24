@@ -86,8 +86,9 @@
           <div class="cash-find"><input type="text" class="search" id="cash-search" placeholder="Search Account No. or Client Name" autocomplete="off" oninput="cashSearch()" onfocus="cashSearch()" onblur="setTimeout(function(){$('cash-results').classList.add('hidden')},150)"><div id="cash-results" class="cash-results hidden"></div></div>
           <div id="cash-picked" class="cash-picked hidden"></div><input type="hidden" id="cash-client">
           <label class="st-lbl">Payment</label><select id="cash-type" class="st-sel"><option>Full payment</option><option>Partial payment</option></select>
+          <div id="cash-preview" class="payment-breakdown hidden" aria-live="polite"></div>
           <button class="st-btn" onclick="encodeCash()">Encode payment and issue O.R.</button>
-          <p class="st-note">Partial payment is only available on the statement&rsquo;s due date. The other half must be paid before the grace period ends. The official receipt number is created automatically.</p>
+          <p class="st-note">Partial payment is only available on the statement&rsquo;s due date. After a partial payment is verified, only the full remaining balance is accepted. The official receipt number is created automatically.</p>
         </div>
       </div>
     </section>

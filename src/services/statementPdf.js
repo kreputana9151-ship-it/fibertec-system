@@ -58,9 +58,19 @@ function buildStatementPdf(out, s, payments) {
 // all data one e-Statement needs
 async function loadStatement(query, statementId) {
   const s = (await query(
-    `SELECT s.invoice_no, s.bill_date::text, s.due_date::text, s.amount, s.amount_paid, s.balance, s.payment_status,
+    `SELECT s.invoice_no, s.bill_date::text, s.due_date::text, s.amount,
+            COALESCE(v.verified_paid, 0) AS amount_paid,
+            GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance,
+            CASE WHEN COALESCE(v.verified_paid, 0) >= s.amount THEN 'Paid'
+                 WHEN COALESCE(v.verified_paid, 0) > 0 THEN 'Partially paid'
+                 ELSE 'Unpaid' END AS payment_status,
             c.name, c.address, c.account_no, p.plan_name, b.name AS branch
        FROM statements s JOIN clients c ON c.account_no = s.account_no JOIN plans p ON p.plan_id = c.plan_id JOIN branches b ON b.branch_code = c.branch_code
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(pm.amount), 0) AS verified_paid
+           FROM payments pm
+          WHERE pm.statement_id=s.statement_id AND pm.status='Verified'
+       ) v ON TRUE
       WHERE s.statement_id=$1`, [statementId])).rows[0];
   if (!s) return null;
   const pays = (await query(`SELECT method, reference_no, or_no, status, amount, payment_date::text FROM payments
