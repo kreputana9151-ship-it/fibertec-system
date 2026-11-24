@@ -175,14 +175,18 @@ async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
   if (!p || p.status !== 'Pending') throw new Error('Pending payment not found.');
   const s = (await c.query('SELECT * FROM statements WHERE statement_id=$1 FOR UPDATE', [p.statement_id])).rows[0];
   if (!s || s.account_no !== p.account_no) throw new Error('Payment statement not found.');
+  const client = (await c.query('SELECT status FROM clients WHERE account_no=$1', [p.account_no])).rows[0];
   const verified = Number((await c.query(
     `SELECT COALESCE(SUM(amount), 0) AS total
        FROM payments WHERE statement_id=$1 AND status='Verified'`, [s.statement_id]
   )).rows[0].total);
   const remaining = Math.max(Number(s.amount) - verified, 0);
   if (Number(p.amount) > remaining) throw new Error('Payment exceeds the remaining statement balance.');
-  if ((verified > 0 || String(s.payment_status).toLowerCase() === 'partially paid') && Number(p.amount) !== remaining)
-    throw new Error('A partially paid statement requires full payment of its remaining balance.');
+  const terminated = client && String(client.status).toLowerCase() === 'terminated';
+  if ((terminated || verified > 0 || String(s.payment_status).toLowerCase() === 'partially paid') && Number(p.amount) !== remaining)
+    throw new Error(terminated
+      ? 'Terminated accounts must pay the full remaining balance.'
+      : 'A partially paid statement requires full payment of its remaining balance.');
 
   const paid = verified + Number(p.amount);
   const balance = Math.max(Number(s.amount) - paid, 0);

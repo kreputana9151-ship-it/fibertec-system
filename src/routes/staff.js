@@ -234,7 +234,7 @@ router.get('/payments/queue', async (req, res) => {
 // GET /api/staff/statements/open?q=
 router.get('/statements/open', async (req, res) => {
   const { rows } = await query(
-    `SELECT s.statement_id, s.account_no, c.name, s.amount, s.payment_status AS stored_payment_status,
+    `SELECT s.statement_id, s.account_no, c.name, c.status AS client_status, s.amount, s.payment_status AS stored_payment_status,
             COALESCE(v.verified_paid, 0) AS amount_paid,
             GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance,
             CASE WHEN COALESCE(v.verified_paid, 0) >= s.amount THEN 'Paid'
@@ -268,7 +268,7 @@ router.post('/payments/cash', async (req, res) => {
   try {
     const out = await tx(async c => {
       const s = (await c.query(
-        `SELECT s.*, COALESCE(v.verified_paid, 0) AS verified_paid,
+        `SELECT s.*, cl.status AS client_status, COALESCE(v.verified_paid, 0) AS verified_paid,
                 GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS remaining_balance
            FROM statements s JOIN clients cl USING (account_no)
            LEFT JOIN LATERAL (
@@ -284,8 +284,11 @@ router.post('/payments/cash', async (req, res) => {
       if (!(amt > 0) || amt > remainingBalance) throw new Error('Payment amount must be greater than 0 and not exceed the remaining balance.');
       const pastDue = new Date(s.due_date) < new Date(new Date().toDateString());
       const isFull = amt === remainingBalance;
-      if ((Number(s.verified_paid) > 0 || String(s.payment_status).toLowerCase() === 'partially paid') && !isFull)
-        throw new Error('A partially paid statement requires full payment of its remaining balance.');
+      const terminated = String(s.client_status).toLowerCase() === 'terminated';
+      if ((terminated || Number(s.verified_paid) > 0 || String(s.payment_status).toLowerCase() === 'partially paid') && !isFull)
+        throw new Error(terminated
+          ? 'Terminated accounts must pay the full remaining balance.'
+          : 'A partially paid statement requires full payment of its remaining balance.');
       if (pastDue && !isFull) throw new Error('Account is past due: full remaining balance is required.');
       const p = await c.query(
         `INSERT INTO payments (statement_id, account_no, amount, method, payment_type, or_no, payment_date)

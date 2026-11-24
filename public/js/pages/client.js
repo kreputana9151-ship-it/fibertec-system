@@ -20,7 +20,9 @@ function cycleLabel(s) {
 }
 function pillClass(l) { return l == "Paid" ? "paid" : (l == "Awaiting verification" || l == "Partially paid") ? "wait" : (l == "Overdue" || l == "Rejected") ? "rej" : ""; }
 function pill(l, id) { return "<span class='c-pill " + pillClass(l) + "'" + (id ? " id='" + id + "'" : "") + ">" + l + "</span>"; }
-function canPayNow() { return inBillingNow() && STM.length > 0 && cur().balance > 0 && !ME.hasPending; }
+function canPayNow() {
+  return STM.length > 0 && cur().balance > 0 && !ME.hasPending;
+}
 function nextDueISO() { var t = new Date(), c = new Date(t.getFullYear(), t.getMonth(), ME.due); if (c < new Date(t.getFullYear(), t.getMonth(), t.getDate())) c = new Date(t.getFullYear(), t.getMonth() + 1, ME.due); return iso(c); }
 
 function myHistory() {
@@ -64,17 +66,27 @@ function renderClient() {
   $("p-due").innerHTML = "Due " + fmtD(s.due) + " &nbsp; Paid " + peso(s.paid) + " of " + peso(s.amount); $("p-branch").innerHTML = esc(ME.branch);
   $("paytype").style.display = canPayNow() ? "" : "none";
   updatePaymentOptions(s);
-  $("p-blocked").innerHTML = !inBillingNow() ? "Payments are not available while your account is " + ME.status.toLowerCase() + "." : !STM.length ? "You have no statement yet." : ME.hasPending ? "Your payment is waiting for staff verification." : s.balance == 0 ? "You are fully paid for this statement. Thank you!" : "";
+  $("p-blocked").innerHTML = !STM.length || s.balance <= 0
+    ? "No pending balance to pay."
+    : ME.hasPending
+      ? "Your payment is waiting for staff verification."
+      : "";
   renderStatements(); renderNotifications(); updatePay();
 }
 function updatePaymentOptions(s) {
   var select = $("paytype"), full = select.querySelector("option[value='full']"), partial = select.querySelector("option[value='partial']");
-  var partialAlreadyPaid = (s.paid > 0 || s.partialLocked) && s.balance > 0;
+  var terminated = String(ME.status || "").toLowerCase() == "terminated";
+  var partialAlreadyPaid = (terminated || s.paid > 0 || s.partialLocked) && s.balance > 0;
   partial.disabled = partialAlreadyPaid; partial.hidden = partialAlreadyPaid;
   full.textContent = partialAlreadyPaid ? "Full Payment (Remaining Balance)" : "Full payment";
   if (partialAlreadyPaid && select.value == "partial") select.value = "full";
 }
-function payAmount() { var s = cur(), remaining = remainingBalance(s); return val("paytype") == "partial" ? Math.min(Number(ME.rate) / 2, remaining) : remaining; }
+function payAmount() {
+  var s = cur(), remaining = remainingBalance(s);
+  return val("paytype") == "partial" && String(ME.status || "").toLowerCase() != "terminated"
+    ? Math.min(Number(ME.rate) / 2, remaining)
+    : remaining;
+}
 function updatePay() {
   if (!ME) return;
   var t = val("paytype"), s = cur(), enabled = canPayNow(), amount;

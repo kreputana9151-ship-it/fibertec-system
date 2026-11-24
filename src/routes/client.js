@@ -104,9 +104,9 @@ router.post('/payments', wrap(async (req, res) => {
   if (!/^[0-9]{13}$/.test(referenceNo)) return res.status(400).json({ error: 'GCash reference must be 13 digits' });
 
   const s = (await query(
-    `SELECT s.*, COALESCE(v.verified_paid, 0) AS verified_paid,
+    `SELECT s.*, c.status AS client_status, COALESCE(v.verified_paid, 0) AS verified_paid,
             GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS remaining_balance
-       FROM statements s
+       FROM statements s JOIN clients c USING (account_no)
        LEFT JOIN LATERAL (
          SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
            FROM payments p
@@ -117,6 +117,7 @@ router.post('/payments', wrap(async (req, res) => {
   const remainingBalance = Number(s.remaining_balance);
   const verifiedPaid = Number(s.verified_paid);
   const partialStatement = verifiedPaid > 0 || String(s.payment_status).toLowerCase() === 'partially paid';
+  const terminated = String(s.client_status).toLowerCase() === 'terminated';
   if (remainingBalance <= 0) return res.status(400).json({ error: 'Already fully paid' });
   if ((await query("SELECT 1 FROM payments WHERE account_no=$1 AND status='Pending'", [req.user.accountNo])).rowCount)
     return res.status(409).json({ error: 'You already have a payment waiting for staff verification' });
@@ -125,7 +126,10 @@ router.post('/payments', wrap(async (req, res) => {
   if (!(amt > 0) || amt > remainingBalance) return res.status(400).json({ error: 'Invalid amount' });
   const pastDue = new Date(s.due_date) < new Date(new Date().toDateString());
   const isFull = amt === remainingBalance;
-  if (partialStatement && !isFull) return res.status(400).json({ error: 'A partially paid statement requires full payment of its remaining balance.' });
+  if ((partialStatement || terminated) && !isFull)
+    return res.status(400).json({ error: terminated
+      ? 'Terminated accounts must pay the full remaining balance.'
+      : 'A partially paid statement requires full payment of its remaining balance.' });
   if (pastDue && !isFull) return res.status(400).json({ error: 'After the due date the full balance is required' });
 
   try {
