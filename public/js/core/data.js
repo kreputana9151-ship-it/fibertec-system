@@ -20,16 +20,35 @@ var PLANS = [{ n: "LiteSpeed 50Mbps", r: 799, w: .26 }, { n: "Turbo 110 Mbps", r
 /* ---------- tiny helpers ---------- */
 var MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function iso(d) { return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
-function parseISO(s) { var p = s.split("-"); return new Date(+p[0], +p[1] - 1, +p[2]); }
+function parseISO(s) {
+  if (s == null || s === "") return new Date(NaN);
+  if (s instanceof Date) return new Date(s.getTime());
+  if (typeof s === "string") {
+    s = s.trim();
+    if (!s || s === "null" || s === "undefined") return new Date(NaN);
+    var match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if (match) {
+      var d = new Date(+match[1], +match[2] - 1, +match[3]);
+      return d.getFullYear() === +match[1] && d.getMonth() === +match[2] - 1 && d.getDate() === +match[3] ? d : new Date(NaN);
+    }
+  }
+  return new Date(s);
+}
 function addDays(s, n) { var d = parseISO(s); d.setDate(d.getDate() + n); return iso(d); }
 function dayDiff(a, b) { return Math.round((parseISO(a) - parseISO(b)) / 86400000); }
-function fmtD(s, short) { var d = parseISO(s); return MON[d.getMonth()] + " " + d.getDate() + (short ? "" : ", " + d.getFullYear()); }
+function fmtD(s, short) {
+  var d = parseISO(s);
+  if (isNaN(d.getTime())) return "—";
+  return MON[d.getMonth()] + " " + d.getDate() + (short ? "" : ", " + d.getFullYear());
+}
+function validMonthKey(k) { return typeof k === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(k); }
 function monthLabel(k) {
   if (!k) return "All Months";
+  if (!validMonthKey(k)) return "—";
   for (var i = 0; i < MONTHS.length; i++) if (MONTHS[i].k == k) return MONTHS[i].l;
   return new Date(k + "-01T00:00:00Z").toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 }
-function monShort(k) { return MON[+k.slice(5, 7) - 1] + " " + k.slice(0, 4); }
+function monShort(k) { return validMonthKey(k) ? MON[+k.slice(5, 7) - 1] + " " + k.slice(0, 4) : "—"; }
 function monthDay(k, day) { return k + "-" + ("0" + day).slice(-2); }
 
 var _seed = 20261024;

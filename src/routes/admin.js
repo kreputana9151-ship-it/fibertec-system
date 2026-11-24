@@ -169,6 +169,10 @@ router.get('/clients', async (req, res) => {
               c.status_reason,
               c.due_day,
               c.email,
+              TO_CHAR(c.registered_date, 'YYYY-MM-DD') AS registered_date,
+              TO_CHAR(c.termination_date, 'YYYY-MM-DD') AS termination_date,
+              TO_CHAR(c.registered_date, 'YYYY-MM') AS created_month,
+              TO_CHAR(c.termination_date, 'YYYY-MM') AS terminated_month,
               TO_CHAR(c.registered_date, 'YYYY-MM-DD') AS created_at,
               TO_CHAR(c.termination_date, 'YYYY-MM-DD') AS updated_at,
               TO_CHAR(c.flagged_date, 'YYYY-MM-DD') AS flagged_date,
@@ -260,8 +264,7 @@ router.patch('/clients/:accountNo/status', async (req, res) => {
   if (!['Active', 'Terminated'].includes(status)) return res.status(400).json({ error: 'Use Active or Terminated' });
   try {
     await tx(async c => {
-      const extra = status === 'Terminated'
-        ? { termDate: new Date().toISOString().slice(0, 10), termReason: reason || 'Admin decision' } : {};
+      const extra = status === 'Terminated' ? { termReason: reason || 'Admin decision' } : {};
       await changeStatus(c, req.params.accountNo, status, reason || (status === 'Active' ? 'Reinstated by admin' : 'Terminated by admin'), req.user.userId, extra);
       await logActivity(c, req.user.userId, null, `Set ${req.params.accountNo} to ${status}`);
     });

@@ -19,6 +19,8 @@ router.get('/clients', async (req, res) => {
               p.plan_id, p.plan_name, p.monthly_rate, c.due_day,
               TO_CHAR(c.registered_date, 'YYYY-MM-DD') AS registered_date,
               TO_CHAR(c.termination_date, 'YYYY-MM-DD') AS termination_date,
+              TO_CHAR(c.registered_date, 'YYYY-MM') AS created_month,
+              TO_CHAR(c.termination_date, 'YYYY-MM') AS terminated_month,
               c.termination_reason,
               TO_CHAR(c.flagged_date, 'YYYY-MM-DD') AS flagged_date,
               TO_CHAR(c.grace_end_date, 'YYYY-MM-DD') AS grace_end_date
@@ -295,7 +297,7 @@ router.patch('/cancellations/:id', async (req, res) => {
         [r.request_id, approve ? 'Approved' : 'Rejected', req.user.userId]);
       if (approve) {
         await changeStatus(c, r.account_no, 'Terminated', 'Cancellation approved', req.user.userId,
-          { termDate: new Date().toISOString().slice(0, 10), termReason: 'Client cancellation' });
+          { termReason: 'Client cancellation' });
       }
       await logActivity(c, req.user.userId, req.user.branchCode, `${approve ? 'Approved' : 'Rejected'} cancellation of ${r.account_no}`);
     });

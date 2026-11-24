@@ -2,8 +2,14 @@
    Queue #1 = oldest 'Pending' payment (ORDER BY created_at ASC). Only Queue #1 can be verified or rejected. */
 var PAY = { loaded: false, error: "", queue: [], metrics: null, records: [], activity: [], at: 0 }, BUSY = false;
 
-function fmtTs(v) { return new Date(v).toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" }); }
-function fmtDate(v) { return new Date(v).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }); }
+function fmtTs(v) {
+  var d = parseISO(v);
+  return isNaN(d.getTime()) ? "—" : d.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+}
+function fmtDate(v) {
+  var d = parseISO(v);
+  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+}
 function fmtDur(ms) {
   var s = Math.max(0, Math.floor(ms / 1000)), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
   return d ? d + "d " + h + "h " + m + "m" : h ? h + "h " + m + "m " + x + "s" : m + "m " + x + "s";

@@ -13,7 +13,10 @@ async function changeStatus(c, accountNo, newStatus, reason, userId, extra = {})
   if (old === newStatus) return old;
   await c.query(
     `UPDATE clients SET status=$2, status_reason=$3,
-       flagged_date=$4, grace_end_date=$5, termination_date=$6, termination_reason=$7,
+       flagged_date=COALESCE($4, CASE WHEN $2='Under Review' THEN (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date END),
+       grace_end_date=$5,
+       termination_date=COALESCE($6, CASE WHEN $2='Terminated' THEN (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date END),
+       termination_reason=$7,
        current_balance=COALESCE(
          (SELECT balance FROM statements WHERE account_no=$1 ORDER BY billing_month DESC LIMIT 1), 0)
      WHERE account_no=$1`,

@@ -101,31 +101,41 @@ async function runStatusEngine() {
   const out = { grace: 0, review: 0, terminated: 0 };
 
   const a = await query(
-    `SELECT DISTINCT ON (c.account_no) c.account_no, s.statement_id, s.due_date
+    `SELECT DISTINCT ON (c.account_no) c.account_no, s.statement_id,
+            TO_CHAR(s.due_date + 5, 'YYYY-MM-DD') AS grace_end_date
        FROM clients c JOIN statements s USING (account_no)
-      WHERE c.status='Active' AND s.balance > 0 AND s.due_date < current_date
+      WHERE c.status='Active' AND s.balance > 0
+        AND s.due_date < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date
       ORDER BY c.account_no, s.due_date DESC`
   );
   for (const r of a.rows) {
     await tx(async c => {
       await changeStatus(c, r.account_no, 'Grace Period', 'Unpaid after due date', null,
-        { graceEnd: iso(addDays(new Date(r.due_date), 5)) });
+        { graceEnd: r.grace_end_date });
       await addNotice(c, { accountNo: r.account_no, statementId: r.statement_id, type: 'Disconnection Warning', channel: 'Email' });
       await addNotice(c, { accountNo: r.account_no, statementId: r.statement_id, type: 'Disconnection Warning', channel: 'Portal Notification', status: 'Sent' });
     });
     out.grace++;
   }
 
-  const g = await query("SELECT account_no FROM clients WHERE status='Grace Period' AND grace_end_date < current_date");
+  const g = await query(
+    `SELECT account_no FROM clients
+      WHERE status='Grace Period'
+        AND grace_end_date < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date`
+  );
   for (const r of g.rows) {
-    await tx(c => changeStatus(c, r.account_no, 'Under Review', 'Grace period ended', null, { flagged: iso(new Date()) }));
+    await tx(c => changeStatus(c, r.account_no, 'Under Review', 'Grace period ended', null));
     out.review++;
   }
 
-  const u = await query("SELECT account_no FROM clients WHERE status='Under Review' AND flagged_date <= current_date - 3");
+  const u = await query(
+    `SELECT account_no FROM clients
+      WHERE status='Under Review'
+        AND flagged_date <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date - 3`
+  );
   for (const r of u.rows) {
     await tx(c => changeStatus(c, r.account_no, 'Terminated', 'No admin decision within 3 days', null,
-      { termDate: iso(new Date()), termReason: 'Non-payment' }));
+      { termReason: 'Non-payment' }));
     out.terminated++;
   }
   await deliverPendingEmails();

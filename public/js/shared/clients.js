@@ -8,6 +8,13 @@ var LIVE_STAFF_LOADED = false;
 
 function isAdmin() { return ROLE == "admin"; }
 
+function safeFmtD(val, shortMode) {
+  if (!val) return "—";
+  var str = String(val).trim();
+  if (!str || str === "null" || str === "undefined") return "—";
+  return shortMode ? fmtD(str, shortMode) : fmtD(str);
+}
+
 function planIdForName(planName) {
   var p = String(planName || "").toLowerCase();
   if (p.indexOf("50") >= 0) return 1;
@@ -72,7 +79,7 @@ function getAllActiveClients() {
       var graceEnd = c.grace_end_date || base.graceEnd || "";
       var graceLeft = base.graceLeft || 0;
       if (graceEnd) {
-        var diffMs = new Date(graceEnd + "T23:59:59") - new Date();
+        var diffMs = new Date(String(graceEnd).slice(0, 10) + "T23:59:59+08:00") - new Date();
         graceLeft = Math.max(0, Math.ceil(diffMs / 86400000));
       }
 
@@ -93,12 +100,12 @@ function getAllActiveClients() {
         graceLeft: graceLeft,
         reason: c.status_reason || base.reason || "Overdue Balance",
         flagged: c.flagged_date || base.flagged || "",
-        termDate: c.terminated_month ? c.terminated_month + "-01" : (base.termDate || ""),
-        termReason: c.status_reason || base.termReason || "Terminated",
-        installed: c.created_month ? c.created_month + "-01" : (base.installed || ""),
+        termDate: c.termination_date ? String(c.termination_date).slice(0, 10) : "",
+        termReason: c.termination_reason || c.status_reason || base.termReason || "Terminated",
+        installed: c.registered_date ? String(c.registered_date).slice(0, 10) : "",
         address: c.address || base.address || "",
         fb: base.fb || "",
-        device: base.device || ""
+        device: c.router_location || base.device || ""
       });
     });
   }
@@ -116,6 +123,12 @@ async function syncStaffClients() {
     var rows = await apiCall("GET", "/api/staff/clients");
     LIVE_STAFF_CLIENTS = rows.map(function (r) {
       var base = (typeof clientByNo === "function" ? clientByNo(r.account_no) : null) || {};
+      var graceEnd = r.grace_end_date || base.graceEnd || "";
+      var graceLeft = base.graceLeft || 0;
+      if (graceEnd) {
+        var diffMs = new Date(String(graceEnd).slice(0, 10) + "T23:59:59+08:00") - new Date();
+        graceLeft = Math.max(0, Math.ceil(diffMs / 86400000));
+      }
       return Object.assign({}, base, {
         no: r.account_no,
         name: r.name,
@@ -129,16 +142,16 @@ async function syncStaffClients() {
         due: Number(r.due_day || base.due || 15),
         dueISO: base.dueISO || "",
         pay: base.pay || "Paid",
-        graceEnd: base.graceEnd || "",
-        graceLeft: base.graceLeft || 0,
-        reason: base.reason || "Client Cancellation Request",
-        flagged: base.flagged || "",
-        termDate: base.termDate || "",
-        termReason: base.termReason || "",
-        installed: r.registered_date || base.installed || "",
+        graceEnd: graceEnd,
+        graceLeft: graceLeft,
+        reason: r.status_reason || base.reason || "Client Cancellation Request",
+        flagged: r.flagged_date || base.flagged || "",
+        termDate: r.termination_date ? String(r.termination_date).slice(0, 10) : "",
+        termReason: r.termination_reason || r.status_reason || base.termReason || "",
+        installed: r.registered_date ? String(r.registered_date).slice(0, 10) : "",
         address: r.address || base.address || "",
         fb: base.fb || "",
-        device: base.device || ""
+        device: r.router_location || base.device || ""
       });
     });
     LIVE_STAFF_LOADED = true;
@@ -180,10 +193,10 @@ function clientCols(tab) {
   var act = isAdmin(), take = function (c) { return "<button class='action review' onclick='event.stopPropagation();reviewClient(\"" + c.no + "\")'>Take Action</button>"; };
   var cols = {
     "All": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Contact No.", function (c) { return esc(c.contact || "—"); }], ["Email", function (c) { return esc(c.email || "—"); }], ["Branch", function (c) { return esc(c.branch); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Status", function (c) { return badgeFor(c.status); }]],
-    "Active": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Branch", function (c) { return esc(c.branch); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Monthly Rate", function (c) { return peso(c.rate); }], ["Due Date", function (c) { return c.dueISO ? fmtD(c.dueISO, 1) : ("Every " + ordinal(c.due || 15)); }], ["Payment Status", function (c) { return badgeFor(c.pay || "Paid"); }]],
-    "Grace Period": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Monthly Rate", function (c) { return peso(c.rate); }], ["Outstanding Balance", function (c) { return peso(c.balance); }], ["Grace Period Ends", function (c) { return fmtD(c.graceEnd); }], ["Days Remaining", function (c) { return "<b>" + c.graceLeft + " Day" + (c.graceLeft == 1 ? "" : "s") + " Left</b>"; }]],
-    "Under Review": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Branch", function (c) { return esc(c.branch); }], ["Outstanding Balance", function (c) { return peso(c.balance); }], ["Reason", function (c) { return esc(c.reason); }], ["Date Flagged", function (c) { return fmtD(c.flagged); }]],
-    "Terminated": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Outstanding Balance", function (c) { return peso(c.balance); }], ["Termination Date", function (c) { return fmtD(c.termDate); }], ["Payment Status", function (c) { return badgeFor(c.pay || "Unpaid"); }]]
+    "Active": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Branch", function (c) { return esc(c.branch); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Monthly Rate", function (c) { return peso(c.rate); }], ["Due Date", function (c) { return c.dueISO ? safeFmtD(c.dueISO, 1) : ("Every " + ordinal(c.due || 15)); }], ["Payment Status", function (c) { return badgeFor(c.pay || "Paid"); }]],
+    "Grace Period": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Monthly Rate", function (c) { return peso(c.rate); }], ["Outstanding Balance", function (c) { return peso(c.balance); }], ["Grace Period Ends", function (c) { return safeFmtD(c.graceEnd); }], ["Days Remaining", function (c) { return "<b>" + c.graceLeft + " Day" + (c.graceLeft == 1 ? "" : "s") + " Left</b>"; }]],
+    "Under Review": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Branch", function (c) { return esc(c.branch); }], ["Outstanding Balance", function (c) { return peso(c.balance); }], ["Reason", function (c) { return esc(c.reason); }], ["Date Flagged", function (c) { return safeFmtD(c.flagged); }]],
+    "Terminated": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Outstanding Balance", function (c) { return peso(c.balance); }], ["Termination Date", function (c) { return safeFmtD(c.termDate); }], ["Payment Status", function (c) { return badgeFor(c.pay || "Unpaid"); }]]
   }[tab];
   if (act && tab == "Under Review") cols.push(["Action", take]);
   if (act && tab == "Terminated") cols.push(["Action", function (c) { return "<button class='action' onclick='event.stopPropagation();reactivate(\"" + c.no + "\")'>Take Action</button>"; }]);
@@ -367,14 +380,14 @@ function viewClient(no) {
     ? { inv: liveBill.latest.inv || "—", bill: liveBill.latest.bill || c.installed || "", due: liveBill.latest.due || "", paid: liveBill.latest.paid || 0, amount: liveBill.latest.amount || c.rate || 0 }
     : { inv: "—", bill: c.installed || "", due: c.dueISO || "", paid: 0, amount: c.rate || 0 };
   var extra = "";
-  if (c.status == "Under Review") extra = "<div class='cd-note'><div class='warn amber'><b>Under Review</b> &middot; " + esc(c.reason) + " &middot; flagged " + fmtD(c.flagged) + (isAdmin() ? "" : ". Waiting for an administrator's decision.") + "</div></div>";
-  if (c.status == "Terminated") extra = "<div class='cd-note'><div class='warn red'><b>Terminated</b> on " + fmtD(c.termDate) + " &middot; " + esc(c.termReason || "Non-Payment") + "</div></div>";
-  if (c.status == "Grace Period") extra = "<div class='cd-note'><div class='warn amber'><b>Grace period</b> ends " + fmtD(c.graceEnd) + " (" + c.graceLeft + " day" + (c.graceLeft == 1 ? "" : "s") + " left)</div></div>";
+  if (c.status == "Under Review") extra = "<div class='cd-note'><div class='warn amber'><b>Under Review</b> &middot; " + esc(c.reason) + (c.flagged ? " &middot; flagged " + safeFmtD(c.flagged) : "") + (isAdmin() ? "" : ". Waiting for an administrator's decision.") + "</div></div>";
+  if (c.status == "Terminated") extra = "<div class='cd-note'><div class='warn red'><b>Terminated</b>" + (c.termDate ? " on " + safeFmtD(c.termDate) : "") + " &middot; " + esc(c.termReason || "Non-Payment") + "</div></div>";
+  if (c.status == "Grace Period") extra = "<div class='cd-note'><div class='warn amber'><b>Grace period</b>" + (c.graceEnd ? " ends " + safeFmtD(c.graceEnd) : "") + " (" + c.graceLeft + " day" + (c.graceLeft == 1 ? "" : "s") + " left)</div></div>";
   modal2("<div class='cd-hero'><span class='avatar'>" + initials(c.name) + "</span><div><h2>" + esc(c.name) + "</h2><small>Account " + c.no + " &middot; " + esc(c.branch) + " Branch</small><div style='margin-top:8px'>" + badgeFor(c.status) + "</div></div><button class='x dlg-x' style='background:none;border:0;color:#fff;font-size:28px;cursor:pointer' onclick='closeModal()'>&times;</button></div>" +
     "<div class='cd-stats'><div class='cd-stat'><small>Plan</small><b>" + esc(c.plan.replace(/\s*Mbps/, " Mbps")) + "</b></div><div class='cd-stat'><small>Monthly rate</small><b>" + peso(c.rate) + "</b></div><div class='cd-stat'><small>Payment status</small><b>" + esc(c.pay || "Paid") + "</b></div><div class='cd-stat'><small>Balance</small><b>" + peso(c.balance || 0) + "</b></div></div>" + (extra ? "<div style='height:14px'></div>" + extra : "") +
-    "<div class='cd-grid'><div class='cd-sec'><h4>Records</h4>" + kv("Branch", esc(c.branch) + " Branch") + kv("Plan", "FiberTec " + esc(c.plan)) + kv("Installed date", fmtD(c.installed)) + kv("Monthly rate", peso(c.rate)) + kv("Payment due date", "Every " + ordinal(c.due || 15)) + "</div>" +
+    "<div class='cd-grid'><div class='cd-sec'><h4>Records</h4>" + kv("Branch", esc(c.branch) + " Branch") + kv("Plan", "FiberTec " + esc(c.plan)) + kv("Installed date", safeFmtD(c.installed)) + kv("Monthly rate", peso(c.rate)) + kv("Payment due date", "Every " + ordinal(c.due || 15)) + "</div>" +
     "<div class='cd-sec'><h4>Address and contact</h4>" + kv("Address", esc(c.address || "—")) + kv("Contact no.", esc(c.contact || "—")) + kv("Email", esc(c.email || "—")) + kv("FB / Messenger", esc(c.fb || "—")) + "</div>" +
-    "<div class='cd-sec'><h4>Current statement</h4>" + kv("Invoice no.", esc(s.inv)) + kv("Billing date", fmtD(s.bill)) + kv("Due date", fmtD(s.due)) + kv("Paid / due", peso(s.paid) + " / " + peso(s.amount)) + "</div>" +
+    "<div class='cd-sec'><h4>Current statement</h4>" + kv("Invoice no.", esc(s.inv)) + kv("Billing date", safeFmtD(s.bill)) + kv("Due date", safeFmtD(s.due)) + kv("Paid / due", peso(s.paid) + " / " + peso(s.amount)) + "</div>" +
     "<div class='cd-sec'><h4>Connection device location</h4><p style='margin:6px 0 0'>" + esc(c.device || "Standard indoor ONT placement") + "</p></div></div>" +
     (isAdmin() ? "" : "<div class='cd-note' style='padding-bottom:18px'><div class='view-only' style='margin:0'>View only. Only administrators can terminate or reactivate accounts.</div></div>"), "");
 }
@@ -386,7 +399,7 @@ function reviewClient(no) {
   if (denyIfNotAdmin()) return;
   var c = findClientRecord(no), cancel = c.reason == "Client Cancellation Request";
   modal2("<div class='dlg-head'>Under Review &middot; Take Action<button class='x' onclick='closeModal()'>&times;</button></div><div class='dlg-body'>" +
-    kv("Client", esc(c.name)) + kv("Account No.", c.no) + kv("Branch", esc(c.branch)) + kv("Outstanding Balance", peso(c.balance)) + kv("Reason", esc(c.reason)) + kv("Date flagged", fmtD(c.flagged)) +
+    kv("Client", esc(c.name)) + kv("Account No.", c.no) + kv("Branch", esc(c.branch)) + kv("Outstanding Balance", peso(c.balance)) + kv("Reason", esc(c.reason)) + kv("Date flagged", safeFmtD(c.flagged)) +
     (cancel ? "<div class='warn blue'>The client asked to cancel this plan and branch staff approved the request. Terminate the account to finish the cancellation.</div>"
       : "<div class='warn amber'>Mark paid only after the settlement is verified. If no decision is made within 3 days, the account is terminated automatically.</div>") +
     "<div class='dlg-foot'><button class='btn btn-light' onclick='closeModal()'>Cancel</button>" + (cancel ? "" : "<button class='btn btn-green' onclick='markPaid(\"" + no + "\")'>Mark Paid</button>") + "<button class='btn btn-red' onclick='askTerminate(\"" + no + "\")'>Terminate</button></div></div>", "sm");
@@ -473,7 +486,7 @@ function toggleRegPw() {
 }
 
 function openRegister() {
-  var today = new Date().toISOString().slice(0, 10);
+  var today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }).format(new Date());
   var opts = BRANCHES.map(function (b) { return "<option value='" + b.name + "'>" + b.code + " - " + b.name + "</option>"; }).join("");
   modal2("<div class='dlg-head'>Register New Client<button class='x' onclick='closeModal()'>&times;</button></div><div class='dlg-body'>" +
     "<label>Full name</label><input type='text' id='r-name' placeholder='e.g. Juan Dela Cruz'>" +
