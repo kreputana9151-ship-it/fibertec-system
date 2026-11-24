@@ -108,6 +108,7 @@ async function syncAdminData() {
       status_reason: c.status_reason || "",
       due_day: c.due_day,
       flagged_date: c.flagged_date || "",
+      overdue_due_date: c.overdue_due_date || "",
       grace_end_date: c.grace_end_date || "",
       registered_date: c.registered_date || "",
       termination_date: c.termination_date || "",

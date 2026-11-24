@@ -22,14 +22,23 @@ router.get('/clients', async (req, res) => {
                    ELSE latest.payment_status END AS payment_status,
               COALESCE(latest.has_pending_payment, FALSE) AS has_pending_payment,
               TO_CHAR(latest.due_date, 'YYYY-MM-DD') AS current_due_date,
-              c.status_reason, c.facebook, c.router_location,
+              CASE WHEN c.status='Under Review'
+                   THEN COALESCE(NULLIF(BTRIM(c.status_reason), ''),
+                     CASE WHEN COALESCE(latest.balance, c.current_balance, 0) > 0
+                          THEN 'Grace period ended' ELSE 'Flagged for account review' END)
+                   ELSE c.status_reason END AS status_reason,
+              c.facebook, c.router_location,
               p.plan_id, p.plan_name, p.monthly_rate, c.due_day,
               TO_CHAR(c.registered_date, 'YYYY-MM-DD') AS registered_date,
               TO_CHAR(c.termination_date, 'YYYY-MM-DD') AS termination_date,
               TO_CHAR(c.registered_date, 'YYYY-MM') AS created_month,
               TO_CHAR(c.termination_date, 'YYYY-MM') AS terminated_month,
               c.termination_reason,
-              TO_CHAR(c.flagged_date, 'YYYY-MM-DD') AS flagged_date,
+              CASE WHEN c.status='Under Review'
+                   THEN TO_CHAR(COALESCE(c.flagged_date, overdue.due_date,
+                     (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date), 'YYYY-MM-DD')
+                   ELSE TO_CHAR(c.flagged_date, 'YYYY-MM-DD') END AS flagged_date,
+              TO_CHAR(overdue.due_date, 'YYYY-MM-DD') AS overdue_due_date,
               TO_CHAR(c.grace_end_date, 'YYYY-MM-DD') AS grace_end_date
          FROM clients c JOIN plans p USING (plan_id)
          LEFT JOIN LATERAL (
@@ -48,6 +57,18 @@ router.get('/clients', async (req, res) => {
             WHERE s.account_no=c.account_no
             ORDER BY s.billing_month DESC LIMIT 1
          ) latest ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT s.due_date
+             FROM statements s
+             LEFT JOIN LATERAL (
+               SELECT COALESCE(SUM(pm.amount) FILTER (WHERE pm.status='Verified'), 0) AS verified_paid
+                 FROM payments pm WHERE pm.statement_id=s.statement_id
+             ) paid ON TRUE
+            WHERE s.account_no=c.account_no
+              AND s.due_date <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date
+              AND GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) > 0
+            ORDER BY s.due_date DESC, s.billing_month DESC LIMIT 1
+         ) overdue ON TRUE
         WHERE c.branch_code=$1 AND (c.name ILIKE $2 OR c.account_no LIKE $2 OR c.email ILIKE $2)
         ORDER BY c.client_seq`,
       [req.user.branchCode, q]

@@ -88,8 +88,11 @@ function getAllActiveClients() {
         balance: balance,
         graceEnd: graceEnd,
         graceLeft: graceLeft,
-        reason: c.status_reason || "",
-        flagged: c.flagged_date || "",
+        reason: c.status_reason || (c.status == "Under Review"
+          ? (balance > 0 ? "Grace period ended" : "Flagged for account review")
+          : ""),
+        flagged: c.flagged_date || c.overdue_due_date || (c.status == "Under Review" ? iso(new Date()) : ""),
+        overdue_due_date: c.overdue_due_date || "",
         termDate: c.termination_date ? String(c.termination_date).slice(0, 10) : "",
         termReason: c.termination_reason || c.status_reason || "",
         installed: c.registered_date ? String(c.registered_date).slice(0, 10) : "",
@@ -134,8 +137,11 @@ async function syncStaffClients() {
         pay: r.payment_status || (outstanding > 0 ? "Unpaid" : "—"),
         graceEnd: graceEnd,
         graceLeft: graceLeft,
-        reason: r.status_reason || "",
-        flagged: r.flagged_date || "",
+        reason: r.status_reason || (r.status == "Under Review"
+          ? (outstanding > 0 ? "Grace period ended" : "Flagged for account review")
+          : ""),
+        flagged: r.flagged_date || r.overdue_due_date || (r.status == "Under Review" ? iso(new Date()) : ""),
+        overdue_due_date: r.overdue_due_date || "",
         termDate: r.termination_date ? String(r.termination_date).slice(0, 10) : "",
         termReason: r.termination_reason || r.status_reason || "",
         installed: r.registered_date ? String(r.registered_date).slice(0, 10) : "",
