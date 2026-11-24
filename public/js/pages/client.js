@@ -13,7 +13,7 @@ function cur() {
   s.paid = verifiedPaid(s); s.balance = Math.max(0, Number(s.amount || 0) - s.paid);
   return s;
 }
-function mapStmt(s) { return { id: s.statement_id, inv: s.invoice_no, bill: s.bill_date, due: s.due_date, amount: Number(s.amount), paid: Number(s.amount_paid), balance: Number(s.balance), pay: s.payment_status, partialLocked: Number(s.amount_paid) > 0 || String(s.stored_payment_status || s.payment_status || "").toLowerCase() == "partially paid" }; }
+function mapStmt(s) { return { id: s.statement_id, inv: s.invoice_no, bill: s.issued_date, due: s.due_date, amount: Number(s.amount), paid: Number(s.amount_paid), balance: Number(s.balance), pay: s.payment_status, partialLocked: Number(s.amount_paid) > 0 || String(s.stored_payment_status || s.payment_status || "").toLowerCase() == "partially paid" }; }
 function cycleLabel(s) {
   if (!STM.length) return "No statement yet"; if (s.balance == 0) return "Paid"; if (ME.hasPending) return "Awaiting verification"; if (s.paid > 0) return "Partially paid";
   var d = dayDiff(s.due, todayISO()); return d == 0 ? "Due today" : d > 0 ? "Due in " + d + " day" + (d == 1 ? "" : "s") : "Overdue";
@@ -23,7 +23,7 @@ function pill(l, id) { return "<span class='c-pill " + pillClass(l) + "'" + (id 
 function canPayNow() {
   return STM.length > 0 && cur().balance > 0 && !ME.hasPending;
 }
-function nextDueISO() { var t = new Date(), c = new Date(t.getFullYear(), t.getMonth(), ME.due); if (c < new Date(t.getFullYear(), t.getMonth(), t.getDate())) c = new Date(t.getFullYear(), t.getMonth() + 1, ME.due); return iso(c); }
+function nextDueISO() { return STM.length ? cur().due : todayISO(); }
 
 function myHistory() {
   return PAYS.map(function (r) { return { method: r.method, type: r.payment_type, ref: r.reference_no ? fmtRef(r.reference_no) : "", or: r.or_no || "", date: "Submitted " + fmtD(r.payment_date, 1), amount: r.amount, status: r.status == "Verified" ? "Paid" : r.status == "Pending" ? "Awaiting verification" : "Rejected" }; });
@@ -58,7 +58,7 @@ function renderClient() {
   $("c-cards").innerHTML = "<div class='c-card'><p class='c-lab'>SUBSCRIPTION</p><p class='c-big'>" + mbps + " Mbps</p><p class='c-sub'><b>" + esc(pn) + " " + mbps + "</b> &middot; <b>" + peso(ME.rate) + "/month</b></p></div>" +
     "<div class='c-card'><p class='c-lab'>CURRENT BALANCE</p><p class='c-big'>" + peso(s.balance) + "</p>" + pill(label) + "</div>" +
     "<div class='c-card'><p class='c-lab'>DUE DATE</p><p class='c-big' style='font-size:32px;margin-top:16px'>" + fmtD(s.due) + "</p><p class='c-sub'>balance " + peso(s.balance) + "</p></div>" +
-    "<div class='c-card'><p class='c-lab'>DAYS LEFT IN CYCLE</p><p class='c-big'>" + dayDiff(nextDue, todayISO()) + "</p><p class='c-sub'>Next statement " + fmtD(nextDue) + ". Billing date stays on the " + ordinal(ME.due) + " even if you change plan</p></div>";
+    "<div class='c-card'><p class='c-lab'>DAYS LEFT IN CYCLE</p><p class='c-big'>" + dayDiff(nextDue, todayISO()) + "</p><p class='c-sub'>Next statement " + fmtD(nextDue) + ". Billing follows your anniversary date</p></div>";
   $("c-acct").innerHTML = "<h3>Your Account</h3><div class='c-kv'><b>Account no.</b><span>" + ME.no + "</span></div><div class='c-kv'><b>Address</b><span>" + esc(ME.address) + "</span></div><div class='c-kv'><b>Branch</b><span>" + esc(ME.branch) + "</span></div><div class='c-kv'><b>Installed</b><span>" + fmtD(ME.installed) + "</span></div><div class='c-kv'><b>Device location</b><span>" + esc(ME.device) + "</span></div><div class='c-kv'><b>Email</b><span>" + esc(ME.email) + "</span></div>" +
     "<div class='c-btns'><button class='c-btn' onclick='showPage(\"payment\")'>Pay now</button><button class='c-btn' onclick='showPage(\"statement\")'>View statements</button>" + cancelBtn() + "</div>";
   var h = myHistory(); $("recent").innerHTML = histRows(h.slice(0, 4)); $("history").innerHTML = histRows(h);
@@ -138,11 +138,10 @@ function renderStatements() {
   var s = STM.filter(function (x) { return x.id == selId; })[0], lbl = stmtStatus(s), isCur = s.id == cur().id;
   var recs = PAYS.filter(function (r) { return r.statement_id == s.id && r.status != "Rejected"; });
   var pays = recs.map(function (r) { return "<div class='est-ln'><span>" + r.method + " &middot; " + (r.reference_no ? "Ref " + fmtRef(r.reference_no) : "") + (r.reference_no && r.or_no ? " &middot; " : "") + (r.or_no ? "O.R. " + esc(r.or_no) : "") + "<small>" + fmtD(r.payment_date) + " &middot; " + (r.status == "Verified" ? "Verified" : "Awaiting verification") + "</small></span><span>" + peso(r.amount) + "</span></div>"; }).join("") || "<div class='est-ln'><span style='opacity:.5'>No payments yet</span><span></span></div>";
-  var end = addDays(s.due, 30);
   $("estmt").innerHTML = "<div class='est-head'><div><h3>FiberTec IT Solutions</h3><small>E - STATEMENT</small></div><div class='r'><b>" + esc(s.inv) + "</b><small>Issued " + fmtD(s.bill) + "</small></div></div><div class='est-body'>" +
     "<div class='est-sum'><div><small>Status</small><b>" + lbl + "</b></div><div><small>Due date</small><b>" + fmtD(s.due, 1) + "</b></div><div><small>Amount due</small><b>" + peso(s.balance) + "</b></div></div>" +
     "<div class='est-h'><span>BILL TO</span><span>ACCOUNT</span></div><hr><div class='est-ln' style='align-items:flex-start'><span style='max-width:62%'><b>" + esc(ME.name.toUpperCase()) + "</b><small>" + esc(ME.address) + "</small></span><span style='text-align:right'>" + ME.no + "<small>" + esc(ME.branch.toUpperCase()) + " BRANCH</small></span></div>" +
-    "<div class='est-h'><span>DESCRIPTION</span><span>AMOUNT</span></div><hr><div class='est-ln'><span>" + esc(ME.plan.toUpperCase()) + "<small>" + fmtD(s.due, 1).toUpperCase() + " - " + fmtD(end, 1).toUpperCase() + ", " + end.slice(0, 4) + "</small></span><span>" + peso(s.amount) + "</span></div>" +
+    "<div class='est-h'><span>DESCRIPTION</span><span>AMOUNT</span></div><hr><div class='est-ln'><span>" + esc(ME.plan.toUpperCase()) + "<small>" + fmtD(s.bill, 1).toUpperCase() + " - " + fmtD(s.due, 1).toUpperCase() + ", " + s.due.slice(0, 4) + "</small></span><span>" + peso(s.amount) + "</span></div>" +
     "<div class='est-h'><span>PAYMENTS RECEIVED</span><span>" + peso(s.paid) + "</span></div><hr class='l'>" + pays + "<hr>" +
     "<div class='est-ln est-tot'><span>Total amount due</span><span>" + peso(s.balance) + "</span></div>" +
     "<div class='est-acts'>" + (isCur && canPayNow() ? "<button class='c-btn' onclick='showPage(\"payment\")'>Pay now</button>" : "") + "<button class='c-btn' style='background:#fff;color:#013f70;border:1px solid #013f70' onclick='downloadPdf(" + s.id + ",\"" + esc(s.inv) + "\")'>Download PDF</button>" + (isCur ? cancelBtn() : "") + "</div></div>";

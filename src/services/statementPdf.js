@@ -3,7 +3,6 @@ const PDFDocument = require('pdfkit');
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const money = n => 'PHP ' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });   // Helvetica has no peso sign
 const fmtDate = s => { const [y, m, d] = s.split('-'); return `${MON[m - 1]} ${Number(d)}, ${y}`; };
-const addDays = (s, n) => { const d = new Date(`${s}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 
 function buildStatementPdf(out, s, payments) {
   const doc = new PDFDocument({ size: 'A4', margin: 50, info: { Title: `E-Statement ${s.invoice_no}`, Author: 'FiberTec IT Solutions' } });
@@ -15,7 +14,7 @@ function buildStatementPdf(out, s, payments) {
   doc.fillColor('#fff').font('Helvetica-Bold').fontSize(20).text('FiberTec IT Solutions', 50, 28);
   doc.font('Helvetica').fontSize(10).text('E-STATEMENT', 50, 54);
   doc.font('Helvetica-Bold').fontSize(13).text(s.invoice_no, 50, 28, { width: W, align: 'right' });
-  doc.font('Helvetica').fontSize(10).text(`Issued ${fmtDate(s.bill_date)}`, 50, 54, { width: W, align: 'right' });
+  doc.font('Helvetica').fontSize(10).text(`Issued ${fmtDate(s.issued_date)}`, 50, 54, { width: W, align: 'right' });
 
   let y = 115; doc.fillColor('#000');
   [['Status', status], ['Due date', fmtDate(s.due_date)], ['Amount due', money(s.balance)]].forEach((c, i) => {
@@ -36,7 +35,7 @@ function buildStatementPdf(out, s, payments) {
   doc.font('Helvetica-Bold').fontSize(9).fillColor('#667').text('DESCRIPTION', 50, y).text('AMOUNT', 50, y, { width: W, align: 'right' });
   y += 14; doc.moveTo(50, y).lineTo(50 + W, y).strokeColor('#ccd').stroke(); y += 8;
   doc.font('Helvetica-Bold').fontSize(11).fillColor('#000').text(s.plan_name.toUpperCase(), 50, y).text(money(s.amount), 50, y, { width: W, align: 'right' });
-  doc.font('Helvetica').fontSize(9).fillColor('#667').text(`${fmtDate(s.due_date)} - ${fmtDate(addDays(s.due_date, 30))}`, 50, y + 15);
+  doc.font('Helvetica').fontSize(9).fillColor('#667').text(`${fmtDate(s.issued_date)} - ${fmtDate(s.due_date)}`, 50, y + 15);
   y += 44;
 
   doc.font('Helvetica-Bold').fontSize(9).fillColor('#667').text('PAYMENTS RECEIVED', 50, y).text(money(s.amount_paid), 50, y, { width: W, align: 'right' });
@@ -58,7 +57,7 @@ function buildStatementPdf(out, s, payments) {
 // all data one e-Statement needs
 async function loadStatement(query, statementId) {
   const s = (await query(
-    `SELECT s.invoice_no, s.bill_date::text, s.due_date::text, s.amount,
+    `SELECT s.invoice_no, s.issued_date::text, s.due_date::text, s.amount,
             COALESCE(v.verified_paid, 0) AS amount_paid,
             GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance,
             CASE WHEN COALESCE(v.verified_paid, 0) >= s.amount THEN 'Paid'

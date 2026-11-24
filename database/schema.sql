@@ -107,14 +107,14 @@ CREATE TABLE account_status_log (
 );
 
 -- ---------------------------------------------------------------------
--- 4. Billing statements (stored, one per client per month)
+-- 4. Billing statements (one per client billing cycle; billing_month is the due-month key)
 -- ---------------------------------------------------------------------
 CREATE TABLE statements (
   statement_id   INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   invoice_no     VARCHAR(20)   NOT NULL UNIQUE,      -- e.g. B1 - 2610 - 1001
   account_no     CHAR(8)       NOT NULL REFERENCES clients(account_no),
-  billing_month  DATE          NOT NULL,             -- first day of month, e.g. 2026-10-01
-  bill_date      DATE          NOT NULL,             -- due date minus 7 days
+  billing_month  DATE          NOT NULL,             -- first day of the due month, e.g. 2026-10-01
+  issued_date    DATE          NOT NULL,             -- client registration date or previous cycle due date
   due_date       DATE          NOT NULL,
   amount         NUMERIC(10,2) NOT NULL,
   amount_paid    NUMERIC(10,2) NOT NULL DEFAULT 0,

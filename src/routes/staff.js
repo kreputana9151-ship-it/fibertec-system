@@ -2,7 +2,7 @@ const router = require('express').Router();
 const bcrypt = require('bcrypt');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { query, tx } = require('../db');
-const { applyVerifiedPayment } = require('../services/billing');
+const { applyVerifiedPayment, createInitialStatement } = require('../services/billing');
 const { changeStatus, logActivity, addNotice } = require('../services/audit');
 const { deliverPendingEmails } = require('../services/notify');
 
@@ -98,8 +98,8 @@ router.post('/clients', async (req, res) => {
     return res.status(400).json({ error: 'Client portal password must be between 8 and 72 characters.' });
   }
 
-  const reg = new Date(registeredDate);
-  if (isNaN(reg.getTime())) {
+  const reg = new Date(`${registeredDate}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(registeredDate)) || isNaN(reg.getTime()) || reg.toISOString().slice(0, 10) !== registeredDate) {
     return res.status(400).json({ error: 'Invalid registration date.' });
   }
 
@@ -115,7 +115,7 @@ router.post('/clients', async (req, res) => {
       await c.query('SELECT pg_advisory_xact_lock($1)', [Number(req.user.branchCode)]);
       const seq = (await c.query('SELECT COALESCE(MAX(client_seq),0)+1 AS n FROM clients WHERE branch_code=$1', [req.user.branchCode])).rows[0].n;
       if (seq > 9999) throw new Error('Branch is full (9999 clients)');
-      const accountNo = req.user.branchCode + String(reg.getFullYear() % 100).padStart(2, '0') + String(seq).padStart(4, '0');
+      const accountNo = req.user.branchCode + String(reg.getUTCFullYear() % 100).padStart(2, '0') + String(seq).padStart(4, '0');
 
       const u = await c.query(
         `INSERT INTO users (login_id, password_hash, role, is_active)
@@ -141,9 +141,22 @@ router.post('/clients', async (req, res) => {
           b.facebook || null,
           b.routerLocation || b.router_location || null,
           registeredDate,
-          reg.getDate()
+          reg.getUTCDate()
         ]
       );
+
+      const billing = (await c.query(
+        `SELECT p.monthly_rate, b.short_name
+           FROM plans p CROSS JOIN branches b
+          WHERE p.plan_id=$1 AND b.branch_code=$2`,
+        [planId, req.user.branchCode]
+      )).rows[0];
+      await createInitialStatement(c, {
+        accountNo,
+        shortName: billing.short_name,
+        monthlyRate: billing.monthly_rate,
+        registeredDate
+      });
 
       const welcomeMsg = `Welcome to FiberTec IT Solutions, ${name}! Your Account No. is ${accountNo}. Use your registered email (${email}) or Account No. (${accountNo}) and your assigned password to sign in to the FiberTec Client Portal.`;
 

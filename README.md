@@ -180,7 +180,7 @@ Lahat JSON, may `Authorization: Bearer <token>` (maliban sa login).
 
 ## Business rules implemented
 - Account no. = branch code + YY + 4-digit client ID (e.g. 04260042), ito rin ang client login
-- Statement 7 days before due date; amount = plan rate + previous balance
+- Initial statements are issued on the registration/billing start date; later statements are issued on the previous due date and are due one clamped calendar month later. Amount = plan rate + previous balance. Run `database/fix_statement_issued_dates.sql` when upgrading an existing database.
 - Day after due date -> Grace Period (5 days) + Disconnection Warning -> Under Review -> auto Terminated after 3 days
 - Partial payment only on/before due date; after that, full balance
 - Client history 3 months (views), admin 6 months, older rows deleted daily by `purge_old_records()`

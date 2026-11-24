@@ -143,7 +143,7 @@ async function syncAdminData() {
       acc: s.account_no,
       c: c,
       month: bm,
-      bill: String(s.bill_date || "").slice(0, 10),
+      bill: String(s.issued_date || "").slice(0, 10),
       due: String(s.due_date || "").slice(0, 10),
       amount: Number(s.amount || 0),
       paid: Number(s.amount_paid || 0),
@@ -376,7 +376,7 @@ function renderBilling() {
   $("bill-title").innerHTML = "BILLING FOR " + monthLabel(m).toUpperCase() + " <span class='muted'>(live database records)</span>";
 
   var info = paginate("billing", r.rows);
-  var h = "<thead><tr><th>Invoice No.</th><th class='col-x'>Account No.</th><th>Client Name</th><th class='col-x'>Branch</th><th>Billing Date</th><th>Due Date</th><th>Amount Due</th><th>Status</th></tr></thead><tbody>";
+  var h = "<thead><tr><th>Invoice No.</th><th class='col-x'>Account No.</th><th>Client Name</th><th class='col-x'>Branch</th><th>Issued Date</th><th>Due Date</th><th>Amount Due</th><th>Status</th></tr></thead><tbody>";
   info.rows.forEach(function (s) {
     h += "<tr class='click " + (BILL.sel === s.id ? "sel" : "") + "' onclick='toggleBill(" + s.id + ")'><td>" + esc(s.inv) + "</td><td class='col-x'>" + esc(s.acc) + "</td><td>" + esc(s.c.name) + "</td><td class='col-x'>" + esc(s.c.branch) + "</td><td>" + fmtD(s.bill) + "</td><td>" + fmtD(s.due) + "</td><td>" + peso(s.amount) + "</td><td>" + badgeFor(s.send) + "</td></tr>";
   });
@@ -406,7 +406,7 @@ function renderBillPanel() {
 
   var canSend = s.send !== "Delivered";
   p.innerHTML = "<div class='bpn-head'><div><h3>" + esc(c.name) + "<span>" + esc(c.no) + "</span></h3><p>" + monShort(s.month) + " &middot; " + esc(c.plan) + " &middot; Due " + fmtD(s.due) + "</p><div class='tags'>" + badgeFor(s.pay) + badgeFor(s.send) + "</div></div><button class='x' title='Close' onclick='closeBill()'>&times;</button></div>" +
-    "<div class='bpn-body'><div class='bpn-meta'><div><small>Invoice no.</small><b>" + esc(s.inv) + "</b></div><div><small>Billing date</small><b>" + fmtD(s.bill) + "</b></div><div><small>Due date</small><b>" + fmtD(s.due) + "</b></div><div><small>Branch</small><b>" + esc(c.branch) + "</b></div><div><small>Plan</small><b>" + esc(c.plan) + "</b></div><div><small>Account status</small><b>" + esc(c.status) + "</b></div></div>" +
+    "<div class='bpn-body'><div class='bpn-meta'><div><small>Invoice no.</small><b>" + esc(s.inv) + "</b></div><div><small>Issued date</small><b>" + fmtD(s.bill) + "</b></div><div><small>Due date</small><b>" + fmtD(s.due) + "</b></div><div><small>Branch</small><b>" + esc(c.branch) + "</b></div><div><small>Plan</small><b>" + esc(c.plan) + "</b></div><div><small>Account status</small><b>" + esc(c.status) + "</b></div></div>" +
     "<div class='stmt'><div class='top'><div><h4>FiberTec IT Solutions</h4><div class='tag'>E - STATEMENT</div></div><div style='text-align:right'><b style='font-size:16px'>" + esc(s.inv) + "</b><br><span class='muted'>Issued " + fmtD(s.bill) + "</span></div></div><hr>" +
     "<div class='h'><span>BILL TO</span></div><div class='acc'><div><b style='color:#000'>" + esc(c.name.toUpperCase()) + "</b><br>" + esc(c.address) + "</div><div><span class='h' style='display:block'>ACCOUNT</span>" + esc(c.no) + "<br><span class='muted'>" + esc(c.branch.toUpperCase()) + " BRANCH</span><br><span class='muted'>" + esc(c.email) + "</span></div></div><hr class='l'>" +
     "<div class='h'><span>DESCRIPTION</span><span>AMOUNT</span></div><div class='ln'><span>" + esc(c.plan.toUpperCase()) + "<small>Due " + fmtD(s.due, 1).toUpperCase() + "</small></span><span>" + peso(s.amount) + "</span></div><hr class='l'>" +

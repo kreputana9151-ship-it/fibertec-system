@@ -183,22 +183,23 @@ UPDATE clients c
 
 CREATE TEMP TABLE maybunga_bliss1_billing ON COMMIT DROP AS
 WITH billing_seed (
-  sample_no, billing_month, bill_date, due_date, amount, amount_paid, balance,
+  sample_no, billing_month, due_date, amount, amount_paid, balance,
   payment_status, payment_amount, method, payment_type, reference_no, or_no, payment_date
 ) AS (
   VALUES
-    (1, DATE '2026-11-01', DATE '2026-11-18', DATE '2026-11-25',  799::numeric, 300::numeric,  499::numeric, 'Partially paid', 300::numeric, 'GCash', 'Partial payment', '9000000000001', NULL::text, DATE '2026-11-20'),
-    (2, DATE '2026-11-01', DATE '2026-11-03', DATE '2026-11-10',  999::numeric, 999::numeric,    0::numeric, 'Paid',          999::numeric, 'Cash',  'Full payment',    NULL::text,       'OR-2026-050002', DATE '2026-11-09'),
-    (3, DATE '2026-11-01', DATE '2026-11-13', DATE '2026-11-20', 1299::numeric,   0::numeric, 1299::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
-    (4, DATE '2026-11-01', DATE '2026-11-05', DATE '2026-11-12', 1450::numeric,   0::numeric, 1450::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
-    (5, DATE '2026-08-01', DATE '2026-08-18', DATE '2026-08-25',  799::numeric,   0::numeric,  799::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
-    (6, DATE '2026-11-01', DATE '2026-11-23', DATE '2026-11-30',  999::numeric, 999::numeric,    0::numeric, 'Paid',          999::numeric, 'GCash', 'Full payment',    '9000000000006', NULL::text, DATE '2026-11-24'),
-    (7, DATE '2026-11-01', DATE '2026-11-13', DATE '2026-11-20', 1299::numeric,   0::numeric, 1299::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
-    (8, DATE '2026-11-01', DATE '2026-11-05', DATE '2026-11-12', 1450::numeric,   0::numeric, 1450::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
-    (9, DATE '2026-10-01', DATE '2026-10-10', DATE '2026-10-17',  799::numeric, 799::numeric,    0::numeric, 'Paid',          799::numeric, 'Cash',  'Full payment',    NULL::text,       'OR-2026-050009', DATE '2026-10-19'),
-    (10,DATE '2026-11-01', DATE '2026-11-15', DATE '2026-11-22',  999::numeric, 999::numeric,    0::numeric, 'Paid',          999::numeric, 'GCash', 'Full payment',    '9000000000010', NULL::text, DATE '2026-11-20')
+    (1, DATE '2026-11-01', DATE '2026-11-25',  799::numeric, 300::numeric,  499::numeric, 'Partially paid', 300::numeric, 'GCash', 'Partial payment', '9000000000001', NULL::text, DATE '2026-11-20'),
+    (2, DATE '2026-11-01', DATE '2026-11-10',  999::numeric, 999::numeric,    0::numeric, 'Paid',          999::numeric, 'Cash',  'Full payment',    NULL::text,       'OR-2026-050002', DATE '2026-11-09'),
+    (3, DATE '2026-11-01', DATE '2026-11-20', 1299::numeric,   0::numeric, 1299::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
+    (4, DATE '2026-11-01', DATE '2026-11-12', 1450::numeric,   0::numeric, 1450::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
+    (5, DATE '2026-08-01', DATE '2026-08-25',  799::numeric,   0::numeric,  799::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
+    (6, DATE '2026-11-01', DATE '2026-11-30',  999::numeric, 999::numeric,    0::numeric, 'Paid',          999::numeric, 'GCash', 'Full payment',    '9000000000006', NULL::text, DATE '2026-11-24'),
+    (7, DATE '2026-11-01', DATE '2026-11-20', 1299::numeric,   0::numeric, 1299::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
+    (8, DATE '2026-11-01', DATE '2026-11-12', 1450::numeric,   0::numeric, 1450::numeric, 'Unpaid',           0::numeric, NULL::text, NULL::text, NULL::text, NULL::text, NULL::date),
+    (9, DATE '2026-10-01', DATE '2026-10-17',  799::numeric, 799::numeric,    0::numeric, 'Paid',          799::numeric, 'Cash',  'Full payment',    NULL::text,       'OR-2026-050009', DATE '2026-10-19'),
+    (10,DATE '2026-11-01', DATE '2026-11-22',  999::numeric, 999::numeric,    0::numeric, 'Paid',          999::numeric, 'GCash', 'Full payment',    '9000000000010', NULL::text, DATE '2026-11-20')
 )
-SELECT c.account_no, c.client_seq, b.*
+SELECT c.account_no, c.client_seq, b.*,
+       (b.due_date - INTERVAL '1 month')::date AS issued_date
   FROM maybunga_bliss1_sample_data s
   JOIN clients c ON c.email = s.email AND c.branch_code = '05'
   JOIN billing_seed b ON b.sample_no = s.sample_no;
@@ -215,11 +216,11 @@ DELETE FROM statements old
    AND old.billing_month = seed.billing_month;
 
 INSERT INTO statements (
-  invoice_no, account_no, billing_month, bill_date, due_date,
+  invoice_no, account_no, billing_month, issued_date, due_date,
   amount, amount_paid, balance, payment_status
 )
 SELECT 'B1 - ' || TO_CHAR(seed.billing_month, 'YYMM') || ' - ' || LPAD(seed.client_seq::text, 4, '0'),
-       seed.account_no, seed.billing_month, seed.bill_date, seed.due_date,
+       seed.account_no, seed.billing_month, seed.issued_date, seed.due_date,
        seed.amount, seed.amount_paid, seed.balance, seed.payment_status
   FROM maybunga_bliss1_billing seed;
 

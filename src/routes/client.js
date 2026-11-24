@@ -40,7 +40,7 @@ router.get('/me', wrap(async (req, res) => {
 // the history endpoints read the 3-month VIEWS (older data is hidden from clients)
 router.get('/statements', wrap(async (req, res) => {
   const { rows } = await query(
-    `SELECT s.statement_id, s.invoice_no, s.billing_month::text, s.bill_date::text, s.due_date::text, s.amount,
+    `SELECT s.statement_id, s.invoice_no, s.billing_month::text, s.issued_date::text, s.due_date::text, s.amount,
             s.payment_status AS stored_payment_status,
             COALESCE(v.verified_paid, 0) AS amount_paid,
             GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance,

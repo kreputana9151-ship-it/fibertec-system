@@ -5,62 +5,93 @@ const { loadStatement, pdfBuffer } = require('./statementPdf');
 const { deliverPendingEmails } = require('./notify');
 
 const pad = (n, l = 2) => String(n).padStart(l, '0');
-const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-const lastDay = (y, m) => new Date(y, m + 1, 0).getDate();            // m = 0-11
-const dueDateFor = (y, m, dueDay) => new Date(y, m, Math.min(dueDay, lastDay(y, m)));
+const dateOnly = value => {
+  const date = value instanceof Date ? value.toISOString().slice(0, 10) : String(value || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`Invalid billing date: ${value}`);
+  return date;
+};
+const iso = dateOnly;
+const manilaDate = value => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(value);
+  const part = type => parts.find(item => item.type === type).value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
+};
+const addMonthClamped = value => {
+  const [year, month, day] = dateOnly(value).split('-').map(Number);
+  const next = new Date(Date.UTC(year, month, 1));
+  const last = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth(), Math.min(day, last))).toISOString().slice(0, 10);
+};
+const monthStart = value => `${dateOnly(value).slice(0, 7)}-01`;
 
-// invoice no. like "B1 - 2610 - 1001"
-const invoiceNo = (shortName, billingMonth, accountNo) =>
-  `${shortName} - ${String(billingMonth.getFullYear()).slice(2)}${pad(billingMonth.getMonth() + 1)} - ${accountNo.slice(4)}`;
+// Invoice month follows the cycle's due month, e.g. "B1 - 2612 - 1001".
+const invoiceNo = (shortName, dueDate, accountNo) =>
+  `${shortName} - ${dateOnly(dueDate).slice(2, 4)}${dateOnly(dueDate).slice(5, 7)} - ${accountNo.slice(4)}`;
 
-/* Create statements whose bill date (= due date - 7 days) is today.
-   Amount = plan rate + previous unpaid balance. Only Active / Grace Period clients. */
+async function insertStatement(c, { accountNo, shortName, issuedDate, dueDate, amount }) {
+  const result = await c.query(
+    `INSERT INTO statements (invoice_no, account_no, billing_month, issued_date, due_date, amount, balance)
+     VALUES ($1,$2,$3,$4,$5,$6,$6) ON CONFLICT (account_no, billing_month) DO NOTHING
+     RETURNING statement_id`,
+    [invoiceNo(shortName, dueDate, accountNo), accountNo, monthStart(dueDate), issuedDate, dueDate, amount]
+  );
+  if (!result.rowCount) return false;
+  await c.query('UPDATE clients SET current_balance=$2 WHERE account_no=$1', [accountNo, amount]);
+  return true;
+}
+
+async function createInitialStatement(c, { accountNo, shortName, monthlyRate, registeredDate }) {
+  const issuedDate = dateOnly(registeredDate);
+  if (issuedDate > manilaDate(new Date())) return false;
+  const dueDate = addMonthClamped(issuedDate);
+  return insertStatement(c, {
+    accountNo, shortName, issuedDate, dueDate, amount: Number(monthlyRate)
+  });
+}
+
+/* Create each statement on its cycle anniversary, due one clamped month later. */
 async function generateStatementsForToday(today = new Date()) {
+  const todayDate = today instanceof Date ? manilaDate(today) : dateOnly(today);
   const { rows: clients } = await query(
-    `SELECT c.account_no, c.due_day, c.registered_date, p.monthly_rate, b.short_name
+    `SELECT c.account_no, c.registered_date::text AS registered_date, p.monthly_rate, b.short_name
        FROM clients c JOIN plans p USING (plan_id) JOIN branches b USING (branch_code)
       WHERE c.status IN ('Active','Grace Period')`
   );
   let created = 0;
   for (const c of clients) {
-    for (const offset of [0, 1]) {            // bill may belong to this month's or next month's due date
-      const m = new Date(today.getFullYear(), today.getMonth() + offset, 1);
-      const due = dueDateFor(m.getFullYear(), m.getMonth(), c.due_day);
-      if (iso(addDays(due, -7)) !== iso(today)) continue;
-      if (due <= new Date(c.registered_date)) continue;
-
-      await tx(async cx => {
-        const prev = await cx.query(
-          `SELECT GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS bal
-             FROM statements s
-             LEFT JOIN LATERAL (
-               SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
-                 FROM payments p
-                WHERE p.statement_id=s.statement_id AND p.status='Verified'
-             ) v ON TRUE
-            WHERE s.account_no=$1 AND s.billing_month < $2
-            ORDER BY s.billing_month DESC LIMIT 1`,
-          [c.account_no, iso(m)]
-        );
-        const amount = Number(c.monthly_rate) + Number(prev.rows.length ? prev.rows[0].bal : 0);
-        const ins = await cx.query(
-          `INSERT INTO statements (invoice_no, account_no, billing_month, bill_date, due_date, amount, balance)
-           VALUES ($1,$2,$3,$4,$5,$6,$6) ON CONFLICT (account_no, billing_month) DO NOTHING
-           RETURNING statement_id`,
-          [invoiceNo(c.short_name, m, c.account_no), c.account_no, iso(m), iso(addDays(due, -7)), iso(due), amount]
-        );
-        if (ins.rowCount) {
-          await cx.query(
-            `UPDATE clients
-                SET current_balance=$2
-              WHERE account_no=$1`,
-            [c.account_no, amount]
-          );
-          created++;
-        }
-      });
-    }
+    await tx(async cx => {
+      const { rows: latestRows } = await cx.query(
+        `SELECT s.due_date::text AS due_date,
+                GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance
+           FROM statements s
+           LEFT JOIN LATERAL (
+             SELECT COALESCE(SUM(p.amount), 0) AS verified_paid
+               FROM payments p
+              WHERE p.statement_id=s.statement_id AND p.status='Verified'
+           ) v ON TRUE
+          WHERE s.account_no=$1
+          ORDER BY s.due_date DESC LIMIT 1`, [c.account_no]
+      );
+      let latest = latestRows[0] || null;
+      let issuedDate = latest ? dateOnly(latest.due_date) : dateOnly(c.registered_date);
+      while (issuedDate <= todayDate) {
+        const dueDate = addMonthClamped(issuedDate);
+        const amount = Number(c.monthly_rate) + Number(latest ? latest.balance : 0);
+        const inserted = await insertStatement(cx, {
+          accountNo: c.account_no,
+          shortName: c.short_name,
+          issuedDate,
+          dueDate,
+          amount
+        });
+        if (!inserted) break;
+        created++;
+        latest = { due_date: dueDate, balance: amount };
+        issuedDate = dueDate;
+      }
+    });
   }
   return created;
 }
@@ -92,7 +123,7 @@ async function sendStatement(statementId, adminUserId) {
   catch (e) { console.error('[statement pdf]', e.message); }
   const ok = await sendEmail(
     s.email, `FiberTec e-Statement ${s.invoice_no}`,
-    `Hi ${s.name.split(' ')[0]},\n\nyour e-Statement ${s.invoice_no} is ready (PDF attached).\nAmount due: ${money(s.balance)}\nDue date: ${iso(new Date(s.due_date))}\nAccount no.: ${s.account_no}\n\n${paymentInstructions} Pay with GCash and submit the 13-digit reference number in the client portal, or pay in cash at your branch.${process.env.APP_URL ? `\n\nClient portal: ${process.env.APP_URL}` : ''}`,
+    `Hi ${s.name.split(' ')[0]},\n\nyour e-Statement ${s.invoice_no} is ready (PDF attached).\nAmount due: ${money(s.balance)}\nDue date: ${dateOnly(s.due_date)}\nAccount no.: ${s.account_no}\n\n${paymentInstructions} Pay with GCash and submit the 13-digit reference number in the client portal, or pay in cash at your branch.${process.env.APP_URL ? `\n\nClient portal: ${process.env.APP_URL}` : ''}`,
     { attachments }
   );
   await tx(async c => {
@@ -108,7 +139,7 @@ async function sendStatement(statementId, adminUserId) {
 
 async function sendPendingStatements() {
   const { rows } = await query(
-    "SELECT statement_id FROM statements WHERE send_status='Not Yet Sent' AND bill_date <= current_date"
+    "SELECT statement_id FROM statements WHERE send_status='Not Yet Sent' AND issued_date <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date"
   );
   for (const r of rows) await sendStatement(r.statement_id, null);
   return rows.length;
@@ -229,4 +260,4 @@ async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
   return orNo;
 }
 
-module.exports = { generateStatementsForToday, sendStatement, sendPendingStatements, runStatusEngine, applyVerifiedPayment, iso };
+module.exports = { generateStatementsForToday, createInitialStatement, sendStatement, sendPendingStatements, runStatusEngine, applyVerifiedPayment, iso };

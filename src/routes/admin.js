@@ -253,7 +253,7 @@ router.get('/statements', async (req, res) => {
   const month = selectedMonth(req.query.month);
   if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
   const { rows } = await query(
-    `SELECT s.statement_id, s.invoice_no, s.account_no, s.billing_month, s.bill_date, s.due_date, s.amount,
+    `SELECT s.statement_id, s.invoice_no, s.account_no, s.billing_month, s.issued_date, s.due_date, s.amount,
             COALESCE(v.verified_paid, 0) AS amount_paid,
             GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS balance,
             CASE WHEN COALESCE(v.verified_paid, 0) >= s.amount THEN 'Paid'
