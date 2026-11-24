@@ -10,11 +10,12 @@ function staffDataSignature() {
 
 function fmtTs(v) {
   var d = parseISO(v);
-  return isNaN(d.getTime()) ? "—" : d.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+  return isNaN(d.getTime()) ? "—" : d.toLocaleString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
 }
 function fmtDate(v) {
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) return fmtD(v);
   var d = parseISO(v);
-  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric", year: "numeric" });
 }
 function fmtDur(ms) {
   var s = Math.max(0, Math.floor(ms / 1000)), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
@@ -52,7 +53,7 @@ function metricsHTML() {
 function renderQueue() {
   var q = PAY.queue, box = $("queue"); if (!box) return;
   $("pcount").innerHTML = q.length;
-  $("q-updated").textContent = PAY.at ? "Updated " + new Date(PAY.at).toLocaleTimeString("en-PH") : "";
+  $("q-updated").textContent = PAY.at ? "Updated " + new Date(PAY.at).toLocaleTimeString("en-PH", { timeZone: "Asia/Manila" }) : "";
   $("fifo-metrics").innerHTML = PAY.loaded ? metricsHTML() : "";
   if (!PAY.loaded && !PAY.error) box.innerHTML = "<p class='empty'>Loading the queue...</p>";
   else if (PAY.error && !PAY.loaded) box.innerHTML = "<p class='empty'>" + esc(PAY.error) + " <a style='color:#2b86ff;cursor:pointer' onclick='refreshPayments()'>Try again</a></p>";

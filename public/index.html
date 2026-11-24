@@ -5,8 +5,8 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/jpeg" href="images/brand/logo.jpeg">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css">
-  <link rel="stylesheet" href="css/pages/login.css">
+  <link rel="stylesheet" href="css/style.css?v=2">
+  <link rel="stylesheet" href="css/pages/login.css?v=2">
 </head>
 <body class="login-page">
 <div class="lg">
@@ -16,7 +16,7 @@
     <p>Fast and Reliable Internet Services for your personal and business needs</p>
   </div>
   <div class="lg-right">
-    <form class="lg-form" id="login-form" onsubmit="login();return false;">
+    <form class="lg-form" id="login-form" onsubmit="return submitFormOnce(this, login);">
       <h2>Log in</h2>
       <label>Account number, email, or username</label>
       <input type="text" id="account" autocomplete="username">
@@ -26,7 +26,7 @@
       <button type="submit" class="lg-btn">Log In</button>
       <a class="lg-reset lg-forgot" href="forgot-password.html">Forgot Password? Request Admin Reset</a>
     </form>
-    <form class="lg-form hidden" id="cp-form" onsubmit="changeFirstPassword();return false;">
+    <form class="lg-form hidden" id="cp-form" onsubmit="return submitFormOnce(this, changeFirstPassword);">
       <h2>Set a new password</h2>
       <p class="lg-sub">Your password was reset by the owner. Please choose your own.</p>
       <label>New password</label>
@@ -39,8 +39,9 @@
   </div>
 </div>
 <script src="js/core/input-guard.js"></script>
-<script src="js/core/data.js"></script>
+<script src="js/core/network.js?v=1"></script>
+<script src="js/core/data.js?v=2"></script>
 <script src="js/core/pwtoggle.js"></script>
-<script src="js/core/common.js?v=2"></script>
+<script src="js/core/common.js?v=3"></script>
 </body>
 </html>

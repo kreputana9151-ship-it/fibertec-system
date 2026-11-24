@@ -1,6 +1,6 @@
 /* FiberTec - Client portal. Everything is read from / saved to the REAL database through /api/client/... */
 var ME = null, STM = [], PAYS = [], NOTES = [], NOTIFS = [], CPAGES = ["home", "payment", "statement", "notifications"], selId = null, BUSYP = false, SEL_N = null, PREV_UNREAD = null, CLIENT_RENDERED_SIGNATURE = "";
-function todayISO() { return iso(new Date()); }
+function todayISO() { return manilaISO(); }
 function inBillingNow() { return ME.status == "Active" || ME.status == "Grace Period"; }
 function verifiedPaid(s) {
   var fromPayments = PAYS.filter(function (p) { return String(p.statement_id) == String(s.id) && p.status == "Verified"; })
@@ -29,7 +29,7 @@ function myHistory() {
   return PAYS.map(function (r) { return { method: r.method, type: r.payment_type, ref: r.reference_no ? fmtRef(r.reference_no) : "", or: r.or_no || "", date: "Submitted " + fmtD(r.payment_date, 1), amount: r.amount, status: r.status == "Verified" ? "Paid" : r.status == "Pending" ? "Awaiting verification" : "Rejected" }; });
 }
 function histRows(list) {
-  return list.map(function (e) { return "<div class='c-row'>" + e.method + " &middot; " + e.type + (e.ref ? " <span class='m'>&middot; client reference &middot;</span> " + esc(e.ref) : "") + (e.or ? " <span class='m'>&middot; official receipt &middot;</span> " + esc(e.or) : "") + "<span class='amt'>" + peso(e.amount) + "</span><span class='sd'>" + e.date + "</span><span class='st'>" + pill(e.status) + "</span></div>"; }).join("") || "<p class='muted'>No payments yet.</p>";
+  return list.map(function (e) { return "<div class='c-row'>" + e.method + " &middot; " + e.type + (e.ref ? " <span class='m'>&middot; client reference &middot;</span> " + esc(e.ref) : "") + (e.or ? " <span class='m'>&middot; official receipt &middot;</span> " + esc(e.or) : "") + "<span class='amt'>" + peso(e.amount) + "</span><span class='sd'>" + e.date + "</span><span class='st'>" + pill(e.status) + "</span></div>";   }).join("") || "<p class='muted'>No payments found.</p>";
 }
 function showPage(id) {
   CPAGES.forEach(function (p) { $(p).classList.add("hidden"); var n = $("nav-" + p); if (n) n.classList.remove("on"); });
@@ -108,7 +108,7 @@ function submitPayment() {                                             // goes t
   if (/\s/.test(ref)) { $("referr").innerHTML = "Reference number must not contain whitespace."; return; }
   if (!/^[0-9]{13}$/.test(ref)) { $("referr").innerHTML = "Reference number must be exactly 13 digits."; return; }
   if (BUSYP) return; BUSYP = true; $("referr").innerHTML = "";
-  apiCall("POST", "/api/client/payments", { statementId: s.id, amount: payAmount(), referenceNo: ref })
+  return apiCall("POST", "/api/client/payments", { statementId: s.id, amount: payAmount(), referenceNo: ref })
     .then(function () { cancelPay(); toast("Payment submitted. Branch staff will verify it shortly."); return loadAll(); })
     .catch(function (e) { if (e && e.status != 401) $("referr").innerHTML = esc((e && e.message) || "Could not submit your payment. Please try again."); })
     .then(function () { BUSYP = false; renderClient(); });
@@ -134,7 +134,7 @@ function downloadPdf(id, inv) {                                        // saves 
   }).catch(function (e) { if (e && e.status != 401) toast((e && e.message) || "Download failed. Please try again.", "error"); });
 }
 function renderStatements() {
-  if (!STM.length) { $("stmt-table").innerHTML = "<tbody><tr><td class='muted'>No statements yet.</td></tr></tbody>"; $("estmt").innerHTML = ""; return; }
+  if (!STM.length) { $("stmt-table").innerHTML = "<tbody><tr><td class='muted'>No statements available.</td></tr></tbody>"; $("estmt").innerHTML = ""; return; }
   if (!STM.some(function (m) { return m.id == selId; })) selId = STM[0].id;
   var pn = ME.plan.replace(/\s*\d+\s*Mbps/, ""), mb = (ME.plan.match(/\d+(?=\s*Mbps)/) || [""])[0];
   var t = "<thead><tr><th>STATEMENT</th><th>DUE</th><th>TOTAL</th><th>STATUS</th></tr></thead><tbody>";
@@ -157,12 +157,12 @@ function requestCancel() {
   modal2("<div class='dlg-head'>Request cancellation<button class='x' onclick='closeModal()'>&times;</button></div><div class='dlg-body'><p>Are you sure you want to cancel your FiberTec connection? This sends a request for account <b>" + ME.no + "</b> to your branch staff.</p>" +
     "<label>Reason</label><select id='cx-reason'><option>Moving to a new address</option><option>Switching provider</option><option>Financial reasons</option><option>No longer needs internet</option><option>Other</option></select>" +
     "<label>Enter your password to confirm</label><input type='password' id='cx-pw' autocomplete='current-password'><p class='error' id='cx-err'></p>" +
-    "<div class='dlg-foot'><button class='btn btn-light' onclick='closeModal()'>No, keep my connection</button><button class='btn btn-red' onclick='confirmCancel()'>Yes, cancel my connection</button></div></div>", "sm");
+    "<div class='dlg-foot'><button class='btn btn-light' onclick='closeModal()'>No, keep my connection</button><button class='btn btn-red' onclick='runLockedButton(this, confirmCancel)'>Yes, cancel my connection</button></div></div>", "sm");
 }
 function confirmCancel() {
   var pw = val("cx-pw"); if (!pw) { $("cx-err").innerHTML = "Please enter your password."; return; }
   if (/\s/.test(pw)) { $("cx-err").innerHTML = "Password must not contain whitespace."; return; }
-  apiCall("POST", "/api/client/cancellation", { reason: val("cx-reason"), password: pw }).then(function () { closeModal(); toast("Cancellation request sent to your branch staff."); return loadAll(); })
+  return apiCall("POST", "/api/client/cancellation", { reason: val("cx-reason"), password: pw }).then(function () { closeModal(); toast("Cancellation request sent to your branch staff."); return loadAll(); })
     .then(renderClient).catch(function (e) { if (e && e.status != 401) $("cx-err").innerHTML = esc((e && e.message) || "Could not send the request."); });
 }
 
@@ -233,5 +233,9 @@ function pollClientData() {
 }
 if ($("c-cards") && requireRole("client")) {
   loadAll().then(function () { showPage("home"); setInterval(pollClientData, 15000); })
-    .catch(function (e) { if (e && e.status != 401) toast((e && e.message) || "Cannot reach the server.", "error"); });
+    .catch(function (e) {
+      if (e && e.status != 401) toast((e && e.message) || "Cannot reach the server.", "error");
+      $("history").innerHTML = "<p class='muted'>Unable to load payments. Please check the connection banner above.</p>";
+      $("stmt-table").innerHTML = "<tbody><tr><td class='muted'>Unable to load statements. Please check the connection banner above.</td></tr></tbody>";
+    });
 }

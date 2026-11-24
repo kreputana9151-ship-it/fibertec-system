@@ -5,8 +5,8 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/jpeg" href="images/brand/logo.jpeg">
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Gudea:wght@700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css">
-  <link rel="stylesheet" href="css/pages/admin.css">
+  <link rel="stylesheet" href="css/style.css?v=2">
+  <link rel="stylesheet" href="css/pages/admin.css?v=2">
 </head>
 <body class="admin">
 <header class="topbar">
@@ -60,7 +60,7 @@
       </div>
       <div class="card-table">
         <div class="tabs" id="client-tabs"></div>
-        <div class="tscroll"><table id="client-table"></table></div>
+        <div class="tscroll"><table id="client-table"><tbody><tr class="none loading-row"><td><span class="loading-spinner" aria-hidden="true"></span>Loading clients...</td></tr></tbody></table></div>
         <div id="client-foot"></div>
       </div>
     </section>
@@ -80,7 +80,7 @@
             <input type="text" class="search" id="sr-search" placeholder="Search client or ref no." oninput="onSrFilter()" style="width:230px">
             <select id="sr-method" onchange="onSrFilter()"></select><select id="sr-status" onchange="onSrFilter()"></select>
           </div>
-          <div class="card-table" style="border-color:#c7d2e1"><div class="tscroll"><table id="staff-records"></table></div><div id="sr-foot"></div></div>
+          <div class="card-table" style="border-color:#c7d2e1"><div class="tscroll"><table id="staff-records"><tbody><tr class="none loading-row"><td><span class="loading-spinner" aria-hidden="true"></span>Loading payments...</td></tr></tbody></table></div><div id="sr-foot"></div></div>
         </div>
         <div class="dcard">
           <p class="st-title">Over-the-counter cash entry</p>
@@ -89,7 +89,7 @@
           <div id="cash-picked" class="cash-picked hidden"></div><input type="hidden" id="cash-client">
           <label class="st-lbl">Payment</label><select id="cash-type" class="st-sel"><option>Full payment</option><option>Partial payment</option></select>
           <div id="cash-preview" class="payment-breakdown hidden" aria-live="polite"></div>
-          <button class="st-btn" onclick="encodeCash()">Encode payment and issue O.R.</button>
+          <button class="st-btn" onclick="runLockedButton(this, encodeCash)">Encode payment and issue O.R.</button>
           <p class="st-note">Partial payment is only available on the statement&rsquo;s due date. After a partial payment is verified, only the full remaining balance is accepted. The official receipt number is created automatically.</p>
         </div>
       </div>
@@ -98,10 +98,11 @@
   </main>
 </div>
 <script src="js/core/input-guard.js"></script>
-<script src="js/core/data.js"></script>
-<script src="js/core/common.js?v=2"></script>
-<script src="js/shared/clients.js?v=7"></script>
-<script src="js/pages/queue.js?v=2"></script>
-<script src="js/pages/staff.js?v=2"></script>
+<script src="js/core/network.js?v=1"></script>
+<script src="js/core/data.js?v=2"></script>
+<script src="js/core/common.js?v=3"></script>
+<script src="js/shared/clients.js?v=8"></script>
+<script src="js/pages/queue.js?v=3"></script>
+<script src="js/pages/staff.js?v=3"></script>
 </body>
 </html>

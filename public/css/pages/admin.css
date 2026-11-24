@@ -78,18 +78,18 @@ body.admin { background: var(--bg); padding-top: 80px; }
 .split.open .card-table th, .split.open .card-table td { font-size: 12.5px; padding: 0 5px; }
 .split.open .card-table .ct-title .muted { display: none; }
 .bpn-head { display: flex; align-items: flex-start; gap: 12px; padding: 16px 18px 10px; background: linear-gradient(135deg, #f1f6fd, #fff); border-bottom: 1px solid #dbe3ef; position: sticky; top: 0; z-index: 2; }
-.bpn-head h3 { margin: 0; font-size: 21px; color: var(--ink); } .bpn-head h3 span { font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 6px; }
+.bpn-head h3 { min-width: 0; overflow-wrap: break-word; margin: 0; font-size: 21px; color: var(--ink); } .bpn-head h3 span { font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 6px; }
 .bpn-head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
 .bpn-head .tags { margin-top: 8px; display: flex; gap: 6px; }
 .bpn-head .x { margin-left: auto; width: 34px; height: 34px; border-radius: 50%; border: 0; background: #e8eef8; font-size: 22px; cursor: pointer; transition: background .2s, transform .2s; } .bpn-head .x:hover { background: #d0def2; transform: rotate(90deg); }
 .bpn-body { padding: 14px 18px 18px; }
 .bpn-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
-.bpn-meta div { background: #f4f7fb; border-radius: 8px; padding: 7px 10px; } .bpn-meta small { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; } .bpn-meta b { font-size: 13.5px; font-weight: 600; word-break: break-word; }
+.bpn-meta div { background: #f4f7fb; border-radius: 8px; padding: 7px 10px; } .bpn-meta small { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; } .bpn-meta b { font-size: 13.5px; font-weight: 600; overflow-wrap: break-word; word-break: break-word; }
 .stmt { border: 1px solid #b6c3d6; border-radius: 8px; padding: 16px 18px; margin-bottom: 14px; background: #fff; box-shadow: inset 0 0 0 4px #f4f7fb; }
 .stmt .top { display: flex; justify-content: space-between; gap: 10px; } .stmt .top h4 { margin: 0; font-size: 17px; color: var(--ink); } .stmt .tag { font-size: 11px; font-weight: 700; letter-spacing: .6px; color: #7a8aa3; margin: 2px 0 8px; }
 .stmt hr { border: 0; border-top: 2px solid var(--ink); margin: 6px 0 10px; } .stmt hr.l { border-top: 1px solid #ccd5e2; }
 .stmt .h { font-size: 11px; font-weight: 700; letter-spacing: .5px; color: #7a8aa3; display: flex; justify-content: space-between; }
-.stmt .acc { display: flex; justify-content: space-between; gap: 14px; margin: 4px 0 8px; font-size: 13px; } .stmt .acc > div:first-child { max-width: 62%; color: #555; }
+.stmt .acc { display: flex; justify-content: space-between; gap: 14px; margin: 4px 0 8px; font-size: 13px; } .stmt .acc > div { min-width: 0; overflow-wrap: break-word; } .stmt .acc > div:first-child { max-width: 62%; color: #555; }
 .stmt .ln { display: flex; justify-content: space-between; margin: 7px 0; font-size: 13.5px; } .stmt .ln small { display: block; color: #8a97ab; }
 .stmt .tot { display: flex; justify-content: space-between; font-size: 17px; font-weight: 700; color: var(--ink); }
 .bpn-h { font-size: 12px; font-weight: 700; letter-spacing: .6px; color: var(--navy); margin: 14px 0 6px; text-transform: uppercase; }
@@ -101,7 +101,7 @@ body.admin { background: var(--bg); padding-top: 80px; }
 .st-tile:hover { transform: translateY(-5px); box-shadow: var(--shadow); }
 .st-tile b { display: block; font-size: 16px; font-weight: 700; } .st-tile span { display: block; font-size: 30px; font-weight: 500; margin-top: 14px; }
 .st-cols { display: grid; grid-template-columns: 1.15fr 1fr; gap: 16px; align-items: start; } .st-cols > div { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.row-line { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 6px; border-bottom: 1px solid #ddd; font-size: 14px; border-radius: 6px; transition: background .15s; } .row-line:hover { background: #eaf3fb; }
+.row-line { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 6px; border-bottom: 1px solid #ddd; font-size: 14px; border-radius: 6px; transition: background .15s; } .row-line:hover { background: #eaf3fb; } .row-line > span { min-width: 0; overflow-wrap: break-word; }
 .row-line small { display: block; color: var(--muted); font-size: 12px; }
 .empty { font-size: 14px; font-weight: 600; opacity: .35; margin: 8px 0; }
 .st-title { font-size: 15px; font-weight: 600; color: #4b5870; margin: 0 0 10px; }

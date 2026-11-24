@@ -5,8 +5,8 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/jpeg" href="images/brand/logo.jpeg">
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Gudea:wght@700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css">
-  <link rel="stylesheet" href="css/pages/client.css">
+  <link rel="stylesheet" href="css/style.css?v=2">
+  <link rel="stylesheet" href="css/pages/client.css?v=2">
 </head>
 <body class="client">
 <header class="topbar">
@@ -43,7 +43,7 @@
   <!-- PAYMENT -->
   <section id="payment" class="hidden">
     <div class="c-two">
-      <div class="c-card c-hist"><p class="c-lab16">PAYMENT HISTORY</p><div id="history"></div></div>
+      <div class="c-card c-hist"><p class="c-lab16">PAYMENT HISTORY</p><div id="history"><p class="muted"><span class="loading-spinner" aria-hidden="true"></span> Loading payments...</p></div></div>
       <div class="c-card c-form">
         <p class="c-lab16">PAYMENT FORM</p>
         <p class="c-lab16 c-step">STEP 1 &nbsp;&nbsp; CHOOSE PAYMENT</p>
@@ -68,7 +68,7 @@
           <p class="c-partial hidden" id="partialnote">After staff verify your half. Once your account is in the grace period, the full amount is required.</p>
           <input type="text" id="ref" class="c-ref" maxlength="13" placeholder="13 digits from your GCash receipt">
           <p class="error" id="referr"></p>
-          <div class="c-actions"><button class="c-sbm" onclick="submitPayment()">SUBMIT</button><button class="c-cnl" onclick="cancelPay()">CANCEL</button></div>
+          <div class="c-actions"><button class="c-sbm" onclick="runLockedButton(this, submitPayment)">SUBMIT</button><button class="c-cnl" onclick="cancelPay()">CANCEL</button></div>
         </div>
         <div class="c-info">Pay in your own GCash app. This system only records payments. It never holds or moves your money. Once staff verify a payment, an official receipt (O.R.) is issued for it.</div>
       </div>
@@ -78,7 +78,7 @@
   <!-- STATEMENT -->
   <section id="statement" class="hidden">
     <div class="c-two" style="grid-template-columns:1fr 1.1fr">
-      <div class="c-card c-stl"><p class="c-lab">BILLING STATEMENTS</p><table id="stmt-table"></table></div>
+      <div class="c-card c-stl"><p class="c-lab">BILLING STATEMENTS</p><table id="stmt-table"><tbody><tr><td class="muted"><span class="loading-spinner" aria-hidden="true"></span> Loading statements...</td></tr></tbody></table></div>
       <div class="c-card c-est" id="estmt"></div>
     </div>
   </section>
@@ -90,9 +90,10 @@
   </section>
 </div>
 <script src="js/core/input-guard.js"></script>
-<script src="js/core/data.js"></script>
+<script src="js/core/network.js?v=1"></script>
+<script src="js/core/data.js?v=2"></script>
 <script src="js/core/pwtoggle.js"></script>
-<script src="js/core/common.js?v=2"></script>
-<script src="js/pages/client.js?v=2"></script>
+<script src="js/core/common.js?v=3"></script>
+<script src="js/pages/client.js?v=3"></script>
 </body>
 </html>

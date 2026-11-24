@@ -5,8 +5,8 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/jpeg" href="images/brand/logo.jpeg">
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Gudea:wght@700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css">
-  <link rel="stylesheet" href="css/pages/admin.css">
+  <link rel="stylesheet" href="css/style.css?v=2">
+  <link rel="stylesheet" href="css/pages/admin.css?v=2">
 </head>
 <body class="admin">
 <header class="topbar">
@@ -65,7 +65,7 @@
       </div>
       <div class="card-table">
         <div class="tabs" id="client-tabs"></div>
-        <div class="tscroll"><table id="client-table"></table></div>
+        <div class="tscroll"><table id="client-table"><tbody><tr class="none loading-row"><td><span class="loading-spinner" aria-hidden="true"></span>Loading clients...</td></tr></tbody></table></div>
         <div id="client-foot"></div>
       </div>
     </section>
@@ -81,7 +81,7 @@
       <div class="split" id="bill-split">
         <div class="card-table">
           <p class="ct-title" id="bill-title"></p>
-          <div class="tscroll"><table id="billing-table"></table></div>
+          <div class="tscroll"><table id="billing-table"><tbody><tr class="none loading-row"><td><span class="loading-spinner" aria-hidden="true"></span>Loading statements...</td></tr></tbody></table></div>
           <div id="bill-foot"></div>
         </div>
         <div id="bill-panel" class="bill-panel"></div>
@@ -96,7 +96,7 @@
         <input type="text" class="search" id="p-search" placeholder="Search Account No. or Client Name" oninput="onPayFilter()">
         <select id="p-branch" onchange="onPayFilter()"></select><select id="p-method" onchange="onPayFilter()"></select><select id="p-month" onchange="onPayFilter()"></select><select id="p-status" onchange="onPayFilter()"></select>
       </div>
-      <div class="card-table"><div class="tscroll"><table id="pay-table"></table></div><div id="pay-foot"></div></div>
+      <div class="card-table"><div class="tscroll"><table id="pay-table"><tbody><tr class="none loading-row"><td><span class="loading-spinner" aria-hidden="true"></span>Loading payments...</td></tr></tbody></table></div><div id="pay-foot"></div></div>
     </section>
 
     <!-- BRANCH ANALYTICS -->
@@ -157,7 +157,7 @@
       <div class="dcard" style="margin-bottom:14px">
         <p class="sec">Password Reset Requests <span id="password-reset-panel-count" class="badge orange">0</span></p>
         <p class="muted">Reset the client password to resolve the request. The temporary password is displayed once.</p>
-        <div class="tscroll"><table id="password-reset-requests-table" aria-live="polite"></table></div>
+        <div class="tscroll"><table id="password-reset-requests-table" aria-live="polite"><tbody><tr class="none loading-row"><td><span class="loading-spinner" aria-hidden="true"></span>Loading requests...</td></tr></tbody></table></div>
       </div>
       <div class="stats" id="n-stats"></div>
       <div class="filters">
@@ -178,9 +178,10 @@
 </div>
 
 <script src="js/core/input-guard.js"></script>
-<script src="js/core/data.js"></script>
-<script src="js/core/common.js?v=2"></script>
-<script src="js/shared/clients.js?v=8"></script>
-<script src="js/pages/admin.js?v=7"></script>
+<script src="js/core/network.js?v=1"></script>
+<script src="js/core/data.js?v=2"></script>
+<script src="js/core/common.js?v=3"></script>
+<script src="js/shared/clients.js?v=9"></script>
+<script src="js/pages/admin.js?v=8"></script>
 </body>
 </html>

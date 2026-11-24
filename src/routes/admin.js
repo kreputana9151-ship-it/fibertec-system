@@ -6,6 +6,7 @@ const { query, tx } = require('../db');
 const { sendStatement, generateStatementsForToday, runStatusEngine } = require('../services/billing');
 const { changeStatus, logActivity } = require('../services/audit');
 const { sendEmail } = require('../services/mailer');
+const { publicErrorMessage, publicErrorStatus } = require('../utils/publicError');
 
 router.use(requireAuth, requireRole('admin'));
 // admin sees ALL branches. History shown to admin = last 6 months (purge job deletes older rows)
@@ -162,7 +163,7 @@ router.get('/months', async (req, res) => {
     );
     res.json(rows.map(r => r.month));
   } catch (e) {
-    console.error('GET /api/admin/months error:', e);
+    console.error('GET /api/admin/months failed:', e && (e.code || e.name) || 'Error');
     res.status(500).json({ error: 'Could not load billing months.' });
   }
 });
@@ -174,7 +175,7 @@ router.get('/dashboard', async (req, res) => {
   try {
     res.json(await loadPeriodAnalytics(month, req.query.branch));
   } catch (e) {
-    console.error('GET /api/admin/dashboard error:', e);
+    console.error('GET /api/admin/dashboard failed:', e && (e.code || e.name) || 'Error');
     res.status(500).json({ error: 'Could not load dashboard analytics.' });
   }
 });
@@ -191,7 +192,7 @@ router.get('/password-reset-requests', async (req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    console.error('GET /api/admin/password-reset-requests error:', e);
+    console.error('GET /api/admin/password-reset-requests failed:', e && (e.code || e.name) || 'Error');
     res.status(500).json({ error: 'Could not load password reset requests.' });
   }
 });
@@ -222,8 +223,8 @@ router.post('/password-reset-requests/:id/reset', async (req, res) => {
     });
     res.json({ ok: true, ...result });
   } catch (e) {
-    console.error('POST /api/admin/password-reset-requests/:id/reset error:', e);
-    res.status(e.status || 500).json({ error: e.status ? e.message : 'Could not reset the client password.' });
+    console.error('POST /api/admin/password-reset-requests/:id/reset failed:', e && (e.code || e.name) || 'Error');
+    res.status(publicErrorStatus(e, 500)).json({ error: publicErrorMessage(e, 'Could not reset the client password.') });
   }
 });
 
@@ -249,7 +250,7 @@ router.get('/cancellations', async (req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    console.error('GET /api/admin/cancellations error:', e);
+    console.error('GET /api/admin/cancellations failed:', e && (e.code || e.name) || 'Error');
     res.status(500).json({ error: 'Could not load pending cancellation requests.' });
   }
 });
@@ -332,8 +333,8 @@ router.get('/clients', async (req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    console.error('GET /api/admin/clients error:', e);
-    res.status(500).json({ error: e.message });
+    console.error('GET /api/admin/clients failed:', e && (e.code || e.name) || 'Error');
+    res.status(500).json({ error: publicErrorMessage(e, 'Could not load client records.') });
   }
 });
 
@@ -391,7 +392,9 @@ router.post('/statements/:id/send', async (req, res) => {
     const ok = await sendStatement(req.params.id, req.user.userId);
     await tx(c => logActivity(c, req.user.userId, null, `Sent statement #${req.params.id} (${ok ? 'Delivered' : 'Failed'})`));
     res.json({ delivered: ok });
-  } catch (e) { res.status(404).json({ error: e.message }); }
+  } catch (e) {
+    res.status(publicErrorStatus(e, 404)).json({ error: publicErrorMessage(e, 'Could not send statement.') });
+  }
 });
 
 // GET /api/admin/notices?status=Failed
@@ -467,7 +470,7 @@ router.patch('/clients/:accountNo', async (req, res) => {
     });
     res.json({ ok: true });
   } catch (e) {
-    res.status(400).json({ error: e.message });
+    res.status(publicErrorStatus(e, 400)).json({ error: publicErrorMessage(e, 'Could not update client details.') });
   }
 });
 
@@ -483,8 +486,8 @@ router.post('/clients/:accountNo/reset-password', async (req, res) => {
     });
     res.json({ ok: true, temporaryPassword });
   } catch (e) {
-    console.error('POST /api/admin/clients/:accountNo/reset-password error:', e);
-    res.status(e.status || 500).json({ error: e.status ? e.message : 'Could not reset client password.' });
+    console.error('POST /api/admin/clients/:accountNo/reset-password failed:', e && (e.code || e.name) || 'Error');
+    res.status(publicErrorStatus(e, 500)).json({ error: publicErrorMessage(e, 'Could not reset client password.') });
   }
 });
 
@@ -500,7 +503,9 @@ router.patch('/clients/:accountNo/status', async (req, res) => {
       await logActivity(c, req.user.userId, null, `Set ${req.params.accountNo} to ${status}`);
     });
     res.json({ ok: true });
-  } catch (e) { res.status(400).json({ error: e.message }); }
+  } catch (e) {
+    res.status(publicErrorStatus(e, 400)).json({ error: publicErrorMessage(e, 'Could not update client status.') });
+  }
 });
 
 // GET /api/admin/clients/:accountNo/status-log
@@ -517,7 +522,7 @@ router.get('/analytics', async (req, res) => {
   try {
     res.json(await loadPeriodAnalytics(month, req.query.branch));
   } catch (e) {
-    console.error('GET /api/admin/analytics error:', e);
+    console.error('GET /api/admin/analytics failed:', e && (e.code || e.name) || 'Error');
     res.status(500).json({ error: 'Could not load branch analytics.' });
   }
 });

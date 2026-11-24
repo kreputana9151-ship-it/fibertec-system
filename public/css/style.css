@@ -66,6 +66,10 @@ input.search { width: 340px; max-width: 100%; padding-left: 40px !important; mar
 .card-table td { white-space: nowrap; text-align: center; font-size: 14.5px; height: 42px; padding: 0 10px; border: 1px solid #d5dbe5; }
 .card-table tbody tr:nth-child(even) { background: #f4f6f9; }
 .card-table td:first-child { font-weight: 500; }
+#client-table td:nth-child(2), #client-table td:nth-child(4),
+#billing-table td:nth-child(3), #pay-table td:nth-child(5), #staff-records td:nth-child(4),
+.rp td:nth-child(2) { white-space: normal; overflow-wrap: break-word; }
+#client-table td:nth-child(2), #client-table td:nth-child(4) { white-space: normal; overflow-wrap: break-word; }
 .card-table tbody tr { transition: background .15s; }
 .card-table tbody tr.click { cursor: pointer; }
 .card-table tbody tr.click:hover { background: #dbe9fb; }
@@ -117,16 +121,28 @@ input.search { width: 340px; max-width: 100%; padding-left: 40px !important; mar
 .shake { animation: shake .4s; }
 .toast { position: fixed; right: 24px; bottom: 24px; z-index: 200; background: #0d5c12; color: #fff; padding: 12px 18px; border-radius: 8px; box-shadow: var(--shadow); font-size: 14px; max-width: 380px; animation: pop .25s var(--ease); }
 .toast.error { background: #a00; }
+.server-error-banner { position: fixed; top: 10px; left: 50%; z-index: 10001; display: none; align-items: center; gap: 16px; max-width: calc(100vw - 24px); transform: translateX(-50%); padding: 10px 14px; border: 1px solid #a00; border-radius: 8px; background: #fff0f0; color: #790000; box-shadow: var(--shadow); font-size: 14px; }
+.server-error-banner.visible { display: flex; }
+.server-error-banner button { border: 0; background: transparent; color: inherit; font-size: 22px; line-height: 1; cursor: pointer; }
+.api-loading-indicator { position: fixed; top: 0; left: 50%; z-index: 10000; display: none; align-items: center; gap: 8px; transform: translateX(-50%); padding: 6px 12px; border-radius: 0 0 8px 8px; background: var(--navy2); color: #fff; box-shadow: var(--shadow); font-size: 12px; }
+.api-loading-indicator.visible { display: flex; }
+.loading-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: middle; animation: spin .7s linear infinite; }
+.loading-row td { height: 70px !important; color: var(--muted) !important; font-style: normal !important; }
+.loading-row .loading-spinner { margin-right: 8px; border-color: var(--muted); border-right-color: transparent; }
+@keyframes spin { to { transform: rotate(360deg); } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pop { from { opacity: 0; transform: translateY(12px) scale(.97); } to { opacity: 1; transform: none; } }
 @keyframes shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
 @keyframes slidein { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
 
 /* Client details dialog (admin + staff "View Details") */
-.cd-hero { display: flex; align-items: center; gap: 16px; padding: 20px 24px; background: linear-gradient(135deg, #244c8b, #1c3966); color: #fff; }
+.cd-hero { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 20px 24px; background: linear-gradient(135deg, #244c8b, #1c3966); color: #fff; }
 .cd-hero .avatar { width: 64px; height: 64px; font-size: 24px; }
 .cd-hero h2 { margin: 0; font-size: 22px; } .cd-hero small { opacity: .8; display: block; margin-top: 2px; }
 .cd-hero .x { margin-left: auto; align-self: flex-start; }
+.cd-hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.cd-hero-actions .btn { height: auto; min-height: 36px; padding: 8px 14px; white-space: nowrap; }
+.cd-hero h2, .cd-sec, .cd-sec .kv span:last-child, .long-text { min-width: 0; overflow-wrap: break-word; }
 .cd-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 16px 24px 0; }
 .cd-stat { background: #fff; border: 1px solid #c9d6ea; border-radius: 10px; padding: 10px 12px; transition: transform .2s, box-shadow .2s; }
 .cd-stat:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(0, 47, 110, .15); }

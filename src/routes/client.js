@@ -111,7 +111,8 @@ router.post('/payments', wrap(async (req, res) => {
   }
 
   const s = (await query(
-    `SELECT s.*, c.status AS client_status, COALESCE(v.verified_paid, 0) AS verified_paid,
+    `    SELECT s.*, c.status AS client_status, COALESCE(v.verified_paid, 0) AS verified_paid,
+            s.due_date < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date AS is_past_due,
             GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS remaining_balance
        FROM statements s JOIN clients c USING (account_no)
        LEFT JOIN LATERAL (
@@ -131,7 +132,7 @@ router.post('/payments', wrap(async (req, res) => {
 
   const amt = Number(amount);
   if (!(amt > 0) || amt > remainingBalance) return res.status(400).json({ error: 'Invalid amount' });
-  const pastDue = new Date(s.due_date) < new Date(new Date().toDateString());
+  const pastDue = s.is_past_due;
   const isFull = amt === remainingBalance;
   if ((partialStatement || terminated) && !isFull)
     return res.status(400).json({ error: terminated
@@ -179,5 +180,8 @@ router.post('/cancellation', wrap(async (req, res) => {
   }
 }));
 
-function next500(res, e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+function next500(res, e) {
+  console.error('Client API request failed:', e && (e.code || e.name) || 'Error');
+  res.status(500).json({ error: 'Server error' });
+}
 module.exports = router;

@@ -10,6 +10,7 @@ var LIVE = {
   notices: [],
   passwordResetRequests: [],
   months: [],
+  loadError: "",
   loaded: false
 };
 
@@ -89,14 +90,21 @@ async function adminApi(path, opts) {
 }
 
 async function syncAdminData() {
-  var results = await Promise.all([
-    adminApi("/clients"),
-    adminApi("/statements"),
-    adminApi("/payments"),
-    adminApi("/notices"),
-    adminApi("/months"),
-    adminApi("/password-reset-requests")
-  ]);
+  var results;
+  try {
+    results = await Promise.all([
+      adminApi("/clients"),
+      adminApi("/statements"),
+      adminApi("/payments"),
+      adminApi("/notices"),
+      adminApi("/months"),
+      adminApi("/password-reset-requests")
+    ]);
+  } catch (e) {
+    LIVE.loadError = "Could not load records. Please check your connection and retry.";
+    throw e;
+  }
+  LIVE.loadError = "";
 
   LIVE.clients = results[0].map(function (c) {
     return {
@@ -239,7 +247,7 @@ async function showAdmin(id) {
   hideTip();
   ACTIVE_ADMIN_PAGE = id;
   var monthId = { dash: "d-month", billing: "b-month", analytics: "a-month" }[id];
-  if (monthId) $(monthId).value = new Date().toISOString().slice(0, 7);
+  if (monthId) $(monthId).value = manilaMonthKey();
   try {
     await syncAdminData();
   } catch (e) {
@@ -327,7 +335,7 @@ async function renderDash(isLivePoll) {
     rp.forEach(function (r) {
       h += "<tr><td>" + fmtD(r.payment_date) + "</td><td>" + esc(r.name) + "</td><td>" + peso(r.amount) + "</td><td>" + badgeFor(r.status) + "</td></tr>";
     });
-    $("recent-pay").innerHTML = h + (rp.length ? "" : "<tr><td colspan='4' class='muted'>No payments for this selection.</td></tr>") + "</tbody>";
+    $("recent-pay").innerHTML = h + (rp.length ? "" : "<tr><td colspan='4' class='muted'>No payments found for this selection.</td></tr>") + "</tbody>";
     return true;
   } catch (e) {
     if (request === DASH_REQUEST) {
@@ -372,7 +380,7 @@ function periodQuery(month, branchName) {
   return params.length ? "?" + params.join("&") : "";
 }
 function populateMonthFilters(defaultCurrent) {
-  var months = monthItems(), current = new Date().toISOString().slice(0, 7);
+  var months = monthItems(), current = manilaMonthKey();
   ["d-month", "b-month", "p-month", "a-month"].forEach(function (id) {
     var selected = val(id);
     fillSelect(id, "All Months", months);
@@ -408,7 +416,9 @@ function renderBilling() {
   info.rows.forEach(function (s) {
     h += "<tr class='click " + (BILL.sel === s.id ? "sel" : "") + "' onclick='toggleBill(" + s.id + ")'><td>" + esc(s.inv) + "</td><td class='col-x'>" + esc(s.acc) + "</td><td>" + esc(s.c.name) + "</td><td class='col-x'>" + esc(s.c.branch) + "</td><td>" + fmtD(s.bill) + "</td><td>" + fmtD(s.due) + "</td><td>" + peso(s.amount) + "</td><td>" + badgeFor(s.send) + "</td></tr>";
   });
-  if (!r.rows.length) h += emptyRow(8);
+  if (!r.rows.length) h += LIVE.loaded
+    ? "<tr class='none'><td colspan='8'>No statements available.</td></tr>"
+    : loadingRow(8, LIVE.loadError || "Loading statements...");
   $("billing-table").innerHTML = h + "</tbody>";
   $("bill-foot").innerHTML = footHTML("billing", info, renderBilling);
   renderBillPanel();
@@ -481,7 +491,9 @@ function renderPayments() {
   info.rows.forEach(function (x) {
     h += "<tr><td>" + fmtD(x.date) + "</td><td>" + (x.ref ? fmtRef(x.ref) : "") + "</td><td>" + esc(x.or || "") + "</td><td>" + esc(x.acc) + "</td><td>" + esc(x.name) + "</td><td>" + esc(x.branch) + "</td><td>" + peso(x.amount) + "</td><td>" + esc(x.method) + "</td><td>" + badgeFor(x.status) + "</td></tr>";
   });
-  if (!r.rows.length) h += emptyRow(9);
+  if (!r.rows.length) h += LIVE.loaded
+    ? "<tr class='none'><td colspan='9'>No payments found.</td></tr>"
+    : loadingRow(9, LIVE.loadError || "Loading payments...");
   $("pay-table").innerHTML = h + "</tbody>";
   $("pay-foot").innerHTML = footHTML("pay", info, renderPayments);
 }
@@ -841,12 +853,14 @@ function renderPasswordResetRequests() {
   if (!table) return;
   if (count) count.textContent = LIVE.passwordResetRequests.length;
   var html = "<thead><tr><th>Account No.</th><th>Client Name</th><th>Requested At (Asia/Manila)</th><th>Action</th></tr></thead><tbody>";
-  LIVE.passwordResetRequests.forEach(function (request) {
+  if (!LIVE.loaded) {
+    html += "<tr class='none loading-row'><td colspan='4'><span class='loading-spinner' aria-hidden='true'></span>" + esc(LIVE.loadError || "Loading requests...") + "</td></tr>";
+  } else LIVE.passwordResetRequests.forEach(function (request) {
     html += "<tr><td>" + esc(request.account_no) + "</td><td>" + esc(request.client_name) + "</td><td>" +
       esc(request.requested_at_manila) + "</td><td><button class='action' onclick='resolvePasswordResetRequest(" +
       Number(request.id) + ",this)'>Reset Password</button></td></tr>";
   });
-  if (!LIVE.passwordResetRequests.length) html += "<tr><td colspan='4' class='muted' style='height:56px;text-align:center'>No pending password reset requests.</td></tr>";
+  if (LIVE.loaded && !LIVE.passwordResetRequests.length) html += "<tr><td colspan='4' class='muted' style='height:56px;text-align:center'>No pending password reset requests.</td></tr>";
   table.innerHTML = html + "</tbody>";
 }
 async function resolvePasswordResetRequest(id, button) {
@@ -963,7 +977,7 @@ async function startAdmin() {
   updatePasswordResetBadge();
   var br = branchScope("");
   ["d-branch", "b-branch", "p-branch", "a-branch", "n-branch"].forEach(function (id) { fillSelect(id, "All Branches", br); });
-  var curYm = new Date().toISOString().slice(0, 7);
+  var curYm = manilaMonthKey();
   populateMonthFilters(true);
   ["d-month", "b-month", "a-month"].forEach(function (id) { $(id).value = curYm; });
   $("p-month").value = "";
@@ -997,7 +1011,7 @@ async function startAdmin() {
       if (applied === false || liveRefreshPaused()) return;
       ADMIN_RENDERED_SIGNATURE = signature;
     } catch (e) {
-      console.error("[admin live refresh]", e);
+      console.error("[admin live refresh]", e && e.message ? e.message : "Refresh failed.");
     } finally {
       ADMIN_POLL_RUNNING = false;
     }

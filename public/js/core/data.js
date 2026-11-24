@@ -4,6 +4,14 @@ var MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
 function iso(d) {
   return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
 }
+function manilaISO(value) {
+  var parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(value || new Date()), values = {};
+  parts.forEach(function (part) { if (part.type !== "literal") values[part.type] = part.value; });
+  return values.year + "-" + values.month + "-" + values.day;
+}
+function manilaMonthKey(value) { return manilaISO(value).slice(0, 7); }
 function parseISO(value) {
   if (value == null || value === "") return new Date(NaN);
   if (value instanceof Date) return new Date(value.getTime());
@@ -26,9 +34,18 @@ function addDays(value, days) {
 }
 function dayDiff(a, b) { return Math.round((parseISO(a) - parseISO(b)) / 86400000); }
 function fmtD(value, short) {
+  var raw = typeof value === "string" ? value.trim() : "";
+  var dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (dateOnly) {
+    var dateParts = [+dateOnly[1], +dateOnly[2], +dateOnly[3]], validated = parseISO(raw);
+    if (!isNaN(validated.getTime()))
+      return MON[dateParts[1] - 1] + " " + dateParts[2] + (short ? "" : ", " + dateParts[0]);
+  }
   var d = parseISO(value);
   if (isNaN(d.getTime())) return "—";
-  return MON[d.getMonth()] + " " + d.getDate() + (short ? "" : ", " + d.getFullYear());
+  return new Intl.DateTimeFormat("en-PH", {
+    timeZone: "Asia/Manila", month: "short", day: "numeric", year: short ? undefined : "numeric"
+  }).format(d);
 }
 function validMonthKey(key) { return typeof key === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(key); }
 function monthLabel(key) {
@@ -40,9 +57,9 @@ function monthLabel(key) {
 function monShort(key) { return validMonthKey(key) ? MON[+key.slice(5, 7) - 1] + " " + key.slice(0, 4) : "—"; }
 function monthDay(key, day) { return key + "-" + ("0" + day).slice(-2); }
 
-var APP_TODAY = iso(new Date());
+var APP_TODAY = manilaISO();
 var MONTHS = (function () {
-  var rows = [], date = new Date();
+  var rows = [], date = parseISO(APP_TODAY);
   date.setDate(1);
   for (var i = 0; i < 4; i++) {
     var key = iso(date).slice(0, 7);

@@ -9,7 +9,7 @@ function requestAdminReset() {
   var id = document.getElementById("fp-id").value;
   if (!id) return show("fp-msg", "Please enter your account number, email, or username.");
   if (/\s/.test(id)) return show("fp-msg", "Account number, email, or username must not contain whitespace.");
-  send("request-password-reset", { loginId: id }).then(function (r) {
+  return send("request-password-reset", { loginId: id }).then(function (r) {
     show("fp-msg", r.data.message || r.data.error || "Could not submit the request.", r.ok);
   }).catch(function () { show("fp-msg", "Cannot reach the server. Please try again."); });
 }
@@ -17,7 +17,7 @@ function requestLink() {
   var id = document.getElementById("fp-id").value;
   if (!id) return show("fp-msg", "Please enter your account number or email.");
   if (/\s/.test(id)) return show("fp-msg", "Account number or email must not contain whitespace.");
-  send("forgot-password", { loginId: id }).then(function (r) { show("fp-msg", r.data.message || r.data.error, r.ok); })
+  return send("forgot-password", { loginId: id }).then(function (r) { show("fp-msg", r.data.message || r.data.error, r.ok); })
     .catch(function () { show("fp-msg", "Cannot reach the server. Please try again."); });
 }
 function saveNewPassword() {
@@ -25,7 +25,7 @@ function saveNewPassword() {
   if (/\s/.test(n) || /\s/.test(c)) return show("rp-msg", "Password must not contain whitespace.");
   if (n.length < 8) return show("rp-msg", "Password must be at least 8 characters.");
   if (n != c) return show("rp-msg", "The two passwords do not match.");
-  send("reset-password", { token: TOKEN, newPassword: n }).then(function (r) {
+  return send("reset-password", { token: TOKEN, newPassword: n }).then(function (r) {
     if (!r.ok) return show("rp-msg", r.data.error);
     show("rp-msg", "Password saved. Redirecting to log in...", true); setTimeout(function () { location.href = "index.html"; }, 1500);
   }).catch(function () { show("rp-msg", "Cannot reach the server. Please try again."); });

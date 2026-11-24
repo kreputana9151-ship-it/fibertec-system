@@ -23,7 +23,10 @@ function renderStaff() {
   /* clients needing attention first */
   var rank = { "Grace Period": 0, "Under Review": 1, "Active": 2, "Terminated": 3 };
   var top = mine.slice().sort(function (a, b) { return rank[a.status] - rank[b.status] || (a.balance > 0 ? 0 : 1) - (b.balance > 0 ? 0 : 1); }).slice(0, 6);
-  $("dash-clients").innerHTML = top.map(function (c) { return "<div class='row-line' style='cursor:pointer' onclick='viewClient(\"" + c.no + "\")'><span>" + esc(c.name) + "<small>" + c.no + " &middot; " + c.plan + "</small></span>" + badgeFor(c.status) + "</div>"; }).join("") + "<p class='muted' style='margin:8px 6px 0'><a style='color:#2b86ff;cursor:pointer' onclick='showStaff(\"clients\")'>View all " + mine.length + " clients &rarr;</a></p>";
+  $("dash-clients").innerHTML = !LIVE_STAFF_LOADED
+    ? "<p class='empty'>" + esc(LIVE_STAFF_ERROR || "Loading clients...") + "</p>"
+    : top.map(function (c) { return "<div class='row-line' style='cursor:pointer' onclick='viewClient(\"" + c.no + "\")'><span>" + esc(c.name) + "<small>" + c.no + " &middot; " + c.plan + "</small></span>" + badgeFor(c.status) + "</div>"; }).join("") +
+      (mine.length ? "<p class='muted' style='margin:8px 6px 0'><a style='color:#2b86ff;cursor:pointer' onclick='showStaff(\"clients\")'>View all " + mine.length + " clients &rarr;</a></p>" : "<p class='empty'>No clients found.</p>");
   /* cancellation requests */
   var rq = myRequests("Pending");
   $("dash-requests").innerHTML = rq.length
@@ -113,7 +116,10 @@ function renderStaffPay() {
   renderQueue();
   var rows = srRows(), info = paginate("srec", rows), h = "<thead><tr><th>Date</th><th>Reference No.</th><th>O.R. No.</th><th>Client</th><th>Amount</th><th>Method</th><th>Status</th></tr></thead><tbody>";
   info.rows.forEach(function (r) { h += "<tr><td>" + fmtDate(r.created_at) + "</td><td>" + (r.reference_no ? fmtRef(r.reference_no) : "") + "</td><td>" + esc(r.or_no || "") + "</td><td>" + esc(r.name) + "</td><td>" + peso(r.amount) + "</td><td>" + r.method + "</td><td>" + badgeFor(r.status) + "</td></tr>"; });
-  if (!rows.length) h += "<tr><td colspan='7' class='muted' style='height:70px;text-align:center'>No matching payments.</td></tr>";
+  if (!rows.length) {
+    if (!PAY.loaded) h += loadingRow(7, PAY.error || "Loading payments...");
+    else h += "<tr class='none'><td colspan='7'>No payments found.</td></tr>";
+  }
   $("staff-records").innerHTML = h + "</tbody>"; $("sr-foot").innerHTML = footHTML("srec", info, renderStaffPay);
 }
 /* over-the-counter cash: finds real unpaid statements of this branch (GET /api/staff/statements/open) */
@@ -153,15 +159,19 @@ function updateCashPreview() {
   box.innerHTML = "<b class='payment-breakdown-title'>Receipt preview</b>" + paymentBreakdownHtml(f.statement_total, f.verified_paid, f.amount);
   box.classList.remove("hidden");
 }
+var CASH_BUSY = false;
 function encodeCash() {
+  if (CASH_BUSY) return;
   var id = val("cash-client"); if (!id) { toast("Search and select a client first.", "error"); return; }
   var s = CASH[id], figures = cashFigures();
   if (!figures || !(figures.amount > 0)) { toast("The selected statement has no remaining balance.", "error"); return; }
-  apiCall("POST", "/api/staff/payments/cash", { statementId: Number(id), amount: figures.amount }).then(function (d) {
+  CASH_BUSY = true;
+  return apiCall("POST", "/api/staff/payments/cash", { statementId: Number(id), amount: figures.amount }).then(function (d) {
     toast("Payment encoded. O.R. number issued: " + d.orNo);
     showPaymentReceipt({ name: s.name, account_no: s.account_no, statement_total: figures.statement_total, verified_paid: figures.verified_paid, amount: figures.amount }, d.orNo);
     clearCash(); refreshPayments();
-  }).catch(function (e) { if (e && e.status != 401) toast((e && e.message) || "Could not encode the payment.", "error"); });
+  }).catch(function (e) { if (e && e.status != 401) toast((e && e.message) || "Could not encode the payment.", "error"); })
+    .then(function () { CASH_BUSY = false; });
 }
 function startStaff() {
   $("staff-who").innerHTML = "Staff - " + STAFF_BRANCH; $("staff-av").innerHTML = "S" + (branchOf(STAFF_BRANCH).code.slice(1));

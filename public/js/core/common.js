@@ -80,7 +80,7 @@ function login() {
   if (!pw) { err.innerHTML = "Please enter your password."; return; }
   if (/\s/.test(pw)) { err.innerHTML = "Password must not contain whitespace."; return; }
   err.innerHTML = "";
-  api("login", { loginId: id, password: pw }).then(function (r) {
+  return api("login", { loginId: id, password: pw }).then(function (r) {
     if (!r.ok) { err.innerHTML = esc(r.data.error || "Login failed."); return; }
     if (r.data.mustChangePassword) { LOGIN_RESULT = r.data; LOGIN_PW = pw; $("login-form").classList.add("hidden"); $("cp-form").classList.remove("hidden"); return; }
     goPortal(r.data);
@@ -91,7 +91,7 @@ function changeFirstPassword() {
   if (/\s/.test(n) || /\s/.test(c)) { err.innerHTML = "Password must not contain whitespace."; return; }
   if (n.length < 8) { err.innerHTML = "Password must be at least 8 characters."; return; }
   if (n != c) { err.innerHTML = "The two passwords do not match."; return; }
-  api("change-password", { currentPassword: LOGIN_PW, newPassword: n }, LOGIN_RESULT.token).then(function (r) {
+  return api("change-password", { currentPassword: LOGIN_PW, newPassword: n }, LOGIN_RESULT.token).then(function (r) {
     if (!r.ok) { err.innerHTML = esc(r.data.error || "Could not save the password."); return; }
     goPortal(LOGIN_RESULT);
   }).catch(function () { err.innerHTML = "Cannot reach the server. Please try again."; });
@@ -189,6 +189,9 @@ function footHTML(k, info, render) {
 function gotoPage(k, n) { pgState(k).page = n; PGR[k](); }
 function setPageSize(k, n) { var p = pgState(k); p.size = +n; p.page = 1; PGR[k](); }
 function emptyRow(cols) { return '<tr class="none"><td colspan="' + cols + '">No matching records found.</td></tr>'; }
+function loadingRow(cols, message) {
+  return '<tr class="none loading-row"><td colspan="' + cols + '"><span class="loading-spinner" aria-hidden="true"></span>' + esc(message) + '</td></tr>';
+}
 
 function niceStep(v) { var p = Math.pow(10, Math.floor(Math.log(v) / Math.LN10)), n = v / p, L = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]; for (var i = 0; i < L.length; i++) if (n <= L[i] + 1e-9) return L[i] * p; return 10 * p; }
 function barChart(o) {

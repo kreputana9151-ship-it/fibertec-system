@@ -1,6 +1,9 @@
 require('dotenv').config();
 const { Pool } = require('pg');
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  options: '-c timezone=Asia/Manila'
+});
 
 // run one query
 const query = (text, params) => pool.query(text, params);

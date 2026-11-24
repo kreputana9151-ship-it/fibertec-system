@@ -5,6 +5,7 @@ var CV = { tab: "All" }, TABS = ["All", "Active", "Grace Period", "Under Review"
 var STAFF_BRANCH = sessionStorage.getItem("fiberBranch");
 var LIVE_STAFF_CLIENTS = [];
 var LIVE_STAFF_LOADED = false;
+var LIVE_STAFF_ERROR = "";
 
 function isAdmin() { return ROLE == "admin"; }
 
@@ -91,7 +92,7 @@ function getAllActiveClients() {
         reason: c.status_reason || (c.status == "Under Review"
           ? (balance > 0 ? "Grace period ended" : "Flagged for account review")
           : ""),
-        flagged: c.flagged_date || c.overdue_due_date || (c.status == "Under Review" ? iso(new Date()) : ""),
+        flagged: c.flagged_date || c.overdue_due_date || (c.status == "Under Review" ? manilaISO() : ""),
         overdue_due_date: c.overdue_due_date || "",
         termDate: c.termination_date ? String(c.termination_date).slice(0, 10) : "",
         termReason: c.termination_reason || c.status_reason || "",
@@ -140,7 +141,7 @@ async function syncStaffClients(silent) {
         reason: r.status_reason || (r.status == "Under Review"
           ? (outstanding > 0 ? "Grace period ended" : "Flagged for account review")
           : ""),
-        flagged: r.flagged_date || r.overdue_due_date || (r.status == "Under Review" ? iso(new Date()) : ""),
+        flagged: r.flagged_date || r.overdue_due_date || (r.status == "Under Review" ? manilaISO() : ""),
         overdue_due_date: r.overdue_due_date || "",
         termDate: r.termination_date ? String(r.termination_date).slice(0, 10) : "",
         termReason: r.termination_reason || r.status_reason || "",
@@ -151,7 +152,9 @@ async function syncStaffClients(silent) {
       };
     });
     LIVE_STAFF_LOADED = true;
+    LIVE_STAFF_ERROR = "";
   } catch (e) {
+    LIVE_STAFF_ERROR = (e && e.message) || "Could not load clients.";
     if (e && e.status != 401 && !silent) {
       toast((e && e.message) || "Could not refresh branch clients.", "error");
     }
@@ -214,7 +217,15 @@ function renderClients() {
     cols.forEach(function (k) { s += "<td>" + k[1](c) + "</td>"; });
     s += "</tr>";
   });
-  if (!rows.length) s += emptyRow(cols.length);
+  if (!rows.length) {
+    if (isAdmin() && typeof LIVE !== "undefined" && !LIVE.loaded)
+      s += loadingRow(cols.length, LIVE.loadError || "Loading clients...");
+    else if (!isAdmin() && !LIVE_STAFF_LOADED)
+      s += LIVE_STAFF_ERROR
+        ? "<tr class='none'><td colspan='" + cols.length + "'>" + esc(LIVE_STAFF_ERROR) + "</td></tr>"
+        : loadingRow(cols.length, "Loading clients...");
+    else s += "<tr class='none'><td colspan='" + cols.length + "'>No clients found.</td></tr>";
+  }
   $("client-table").innerHTML = s + "</tbody>";
   $("client-foot").innerHTML = footHTML("clients", info, renderClients);
 }
@@ -267,7 +278,7 @@ function downloadTablePDF(filename, title, subtitle, headers, rows) {
 
     // Subtitle & timestamp
     ops.push("0.25 0.32 0.42 rg");
-    ops.push("BT /F1 9 Tf " + marginX + " 538 Td (" + pdfEscapeText(subtitle + "  |  Generated: " + new Date().toLocaleString()) + ") Tj ET");
+    ops.push("BT /F1 9 Tf " + marginX + " 538 Td (" + pdfEscapeText(subtitle + "  |  Generated: " + new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" })) + ") Tj ET");
 
     // Table header row
     var y = startY - 18;
@@ -381,7 +392,7 @@ function viewClient(no) {
   if (c.status == "Terminated") extra = "<div class='cd-note'><div class='warn red'><b>Terminated</b>" + (c.termDate ? " on " + safeFmtD(c.termDate) : "") + " &middot; " + esc(c.termReason || "Non-Payment") + "</div></div>";
   if (c.status == "Grace Period") extra = "<div class='cd-note'><div class='warn amber'><b>Grace period</b>" + (c.graceEnd ? " ends " + safeFmtD(c.graceEnd) : "") + " (" + c.graceLeft + " day" + (c.graceLeft == 1 ? "" : "s") + " left)</div></div>";
   modal2("<div class='cd-hero'><span class='avatar'>" + initials(c.name) + "</span><div><h2>" + esc(c.name) + "</h2><small>Account " + c.no + " &middot; " + esc(c.branch) + " Branch</small><div style='margin-top:8px'>" + badgeFor(c.status) + "</div></div>" +
-    (isAdmin() ? "<button class='btn btn-light' onclick='editClient(\"" + c.no + "\")'>Edit Client</button><button class='btn btn-light' onclick='resetClientPassword(\"" + c.no + "\")'>Reset Client Password</button>" : "") +
+    (isAdmin() ? "<div class='cd-hero-actions'><button class='btn btn-light' onclick='editClient(\"" + c.no + "\")'>Edit Client</button><button class='btn btn-light' onclick='resetClientPassword(\"" + c.no + "\")'>Reset Client Password</button></div>" : "") +
     "<button class='x dlg-x' style='background:none;border:0;color:#fff;font-size:28px;cursor:pointer' onclick='closeModal()'>&times;</button></div>" +
     "<div class='cd-stats'><div class='cd-stat'><small>Plan</small><b>" + esc(c.plan.replace(/\s*Mbps/, " Mbps")) + "</b></div><div class='cd-stat'><small>Monthly rate</small><b>" + peso(c.rate) + "</b></div><div class='cd-stat'><small>Payment status</small><b>" + esc(c.pay || "—") + "</b></div><div class='cd-stat'><small>Balance</small><b>" + peso(c.balance || 0) + "</b></div></div>" + (extra ? "<div style='height:14px'></div>" + extra : "") +
     "<div class='cd-grid'><div class='cd-sec'><h4>Records</h4>" + kv("Branch", esc(c.branch) + " Branch") + kv("Plan", "FiberTec " + esc(c.plan)) + kv("Installed date", safeFmtD(c.installed)) + kv("Monthly rate", peso(c.rate)) + kv("Payment due date", "Every " + ordinal(c.due || 15)) + "</div>" +
@@ -454,7 +465,7 @@ function editClient(no) {
     "<div><label>FB / Messenger (optional)</label><input id='e-facebook' maxlength='100' value='" + esc(c.fb || "") + "'></div></div>" +
     "<label>Connection device location (optional)</label><input id='e-device' maxlength='150' value='" + esc(c.device || "") + "'>" +
     "<p class='error' id='e-error'></p><div class='dlg-foot'><button class='btn btn-light' onclick='closeModal()'>Cancel</button>" +
-    "<button class='btn' onclick='saveClientEdit(\"" + c.no + "\")'>Save Changes</button></div></div>");
+    "<button class='btn' onclick='runLockedButton(this, function(){return saveClientEdit(\"" + c.no + "\")})'>Save Changes</button></div></div>");
 }
 
 async function saveClientEdit(no) {
@@ -599,7 +610,7 @@ function toggleRegPw() {
 }
 
 function openRegister() {
-  var today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }).format(new Date());
+  var today = manilaISO();
   var opts = BRANCHES.map(function (b) { return "<option value='" + b.name + "'>" + b.code + " - " + b.name + "</option>"; }).join("");
   modal2("<div class='dlg-head'>Register New Client<button class='x' onclick='closeModal()'>&times;</button></div><div class='dlg-body'>" +
     "<label>Full name</label><input type='text' id='r-name' placeholder='e.g. Juan Dela Cruz'>" +

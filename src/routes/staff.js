@@ -5,6 +5,7 @@ const { query, tx } = require('../db');
 const { applyVerifiedPayment, createInitialStatement } = require('../services/billing');
 const { changeStatus, logActivity, addNotice } = require('../services/audit');
 const { deliverPendingEmails } = require('../services/notify');
+const { publicErrorMessage, publicErrorStatus } = require('../utils/publicError');
 
 router.use(requireAuth, requireRole('staff'));
 // every query below uses req.user.branchCode, so staff can never see another branch
@@ -75,8 +76,8 @@ router.get('/clients', async (req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    console.error('GET /api/staff/clients error:', e);
-    res.status(500).json({ error: e.message });
+    console.error('GET /api/staff/clients failed:', e && (e.code || e.name) || 'Error');
+    res.status(500).json({ error: publicErrorMessage(e, 'Could not load branch clients.') });
   }
 });
 
@@ -102,7 +103,7 @@ router.get('/dashboard', async (req, res) => {
     );
     res.json(rows[0]);
   } catch (e) {
-    console.error('GET /api/staff/dashboard error:', e);
+    console.error('GET /api/staff/dashboard failed:', e && (e.code || e.name) || 'Error');
     res.status(500).json({ error: 'Could not load branch dashboard counts.' });
   }
 });
@@ -128,7 +129,11 @@ router.post('/clients', async (req, res) => {
   const password = typeof b.password === 'string' ? b.password : '';
   const address = String(b.address || '').trim();
   const planId = b.planId || b.plan_id;
-  const registeredDate = b.registeredDate || b.registered_date || new Date().toISOString().slice(0, 10);
+  const todayParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date());
+  const part = type => todayParts.find(item => item.type === type).value;
+  const registeredDate = b.registeredDate || b.registered_date || `${part('year')}-${part('month')}-${part('day')}`;
 
   if (!name || !contactNo || !email || !address || !planId || !registeredDate) {
     return res.status(400).json({ error: 'Please complete all required client details (name, contact number, email, address, plan, and registration date).' });
@@ -237,8 +242,8 @@ router.post('/clients', async (req, res) => {
 
     deliverPendingEmails().catch(e => console.error('Welcome email delivery error:', e));
   } catch (e) {
-    console.error('POST /api/staff/clients error:', e);
-    res.status(400).json({ error: e.message });
+    console.error('POST /api/staff/clients failed:', e && (e.code || e.name) || 'Error');
+    res.status(publicErrorStatus(e, 400)).json({ error: publicErrorMessage(e, 'Could not register client.') });
   }
 });
 
@@ -331,6 +336,7 @@ router.post('/payments/cash', async (req, res) => {
     const out = await tx(async c => {
       const s = (await c.query(
         `SELECT s.*, cl.status AS client_status, COALESCE(v.verified_paid, 0) AS verified_paid,
+                s.due_date < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date AS is_past_due,
                 GREATEST(s.amount - COALESCE(v.verified_paid, 0), 0) AS remaining_balance
            FROM statements s JOIN clients cl USING (account_no)
            LEFT JOIN LATERAL (
@@ -344,7 +350,7 @@ router.post('/payments/cash', async (req, res) => {
       const amt = Number(amount);
       const remainingBalance = Number(s.remaining_balance);
       if (!(amt > 0) || amt > remainingBalance) throw new Error('Payment amount must be greater than 0 and not exceed the remaining balance.');
-      const pastDue = new Date(s.due_date) < new Date(new Date().toDateString());
+      const pastDue = s.is_past_due;
       const isFull = amt === remainingBalance;
       const terminated = String(s.client_status).toLowerCase() === 'terminated';
       if ((terminated || Number(s.verified_paid) > 0 || String(s.payment_status).toLowerCase() === 'partially paid') && !isFull)
@@ -363,7 +369,7 @@ router.post('/payments/cash', async (req, res) => {
     if (e.code === '23505' && e.constraint === 'uq_payments_one_pending_per_account') {
       return res.status(409).json({ error: 'This client already has a payment waiting for staff verification.' });
     }
-    res.status(400).json({ error: e.message });
+    res.status(publicErrorStatus(e, 400)).json({ error: publicErrorMessage(e, 'Could not record cash payment.') });
   }
 });
 
@@ -382,7 +388,9 @@ router.patch('/payments/:id/verify', async (req, res) => {
     });
     res.json({ ok: true, orNo, message: `Payment verified successfully (O.R. ${orNo}).` });
     deliverPendingEmails().catch(e => console.error(e));
-  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+  } catch (e) {
+    res.status(publicErrorStatus(e, 400)).json({ error: publicErrorMessage(e, 'Could not verify payment.') });
+  }
 });
 
 // PATCH /api/staff/payments/:id/reject
@@ -400,7 +408,9 @@ router.patch('/payments/:id/reject', async (req, res) => {
     });
     res.json({ ok: true, message: 'Payment rejected and client notified.' });
     deliverPendingEmails().catch(e => console.error(e));
-  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+  } catch (e) {
+    res.status(publicErrorStatus(e, 400)).json({ error: publicErrorMessage(e, 'Could not reject payment.') });
+  }
 });
 
 // GET /api/staff/cancellations ; PATCH /api/staff/cancellations/:id
@@ -451,7 +461,9 @@ router.patch('/cancellations/:id', async (req, res) => {
         ? 'Cancellation request approved and subscriber account terminated.'
         : 'Cancellation request rejected; subscriber remains active.'
     });
-  } catch (e) { res.status(400).json({ error: e.message }); }
+  } catch (e) {
+    res.status(publicErrorStatus(e, 400)).json({ error: publicErrorMessage(e, 'Could not update cancellation request.') });
+  }
 });
 
 // GET /api/staff/activity

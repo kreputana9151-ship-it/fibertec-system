@@ -62,7 +62,10 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
 app.use(express.static(path.join(ROOT, 'public')));                  // frontend, same origin as the API
 
-app.use((err, req, res, next) => { console.error(err); res.status(500).json({ error: 'Server error' }); });
+app.use((err, req, res, next) => {
+  console.error('Unhandled API error:', err && (err.code || err.name) || 'Error');
+  res.status(500).json({ error: 'Server error' });
+});
 
 function createServer() {
   if (!useHttps) return http.createServer(app);

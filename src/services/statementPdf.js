@@ -7,7 +7,14 @@ const fmtDate = s => { const [y, m, d] = s.split('-'); return `${MON[m - 1]} ${N
 function buildStatementPdf(out, s, payments) {
   const doc = new PDFDocument({ size: 'A4', margin: 50, info: { Title: `E-Statement ${s.invoice_no}`, Author: 'FiberTec IT Solutions' } });
   doc.pipe(out);
-  const W = doc.page.width - 100, today = new Date().toISOString().slice(0, 10);
+  const W = doc.page.width - 100;
+  const todayParts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date()).reduce((parts, item) => {
+    if (item.type !== 'literal') parts[item.type] = item.value;
+    return parts;
+  }, {});
+  const today = `${todayParts.year}-${todayParts.month}-${todayParts.day}`;
   const status = Number(s.balance) <= 0 ? 'Paid' : s.due_date < today ? 'Overdue' : s.payment_status;
 
   doc.rect(0, 0, doc.page.width, 90).fill('#013f70');
