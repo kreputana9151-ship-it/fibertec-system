@@ -104,10 +104,10 @@ account_summary AS (
          END AS effective_status
     FROM clients c
     CROSS JOIN billing_clock clock
-    LEFT JOIN balance_totals t USING (account_no)
-    LEFT JOIN latest_statement latest USING (account_no)
-    LEFT JOIN current_statement current_cycle USING (account_no)
-    LEFT JOIN oldest_open_statement open_cycle USING (account_no)
+    LEFT JOIN balance_totals t ON t.account_no=c.account_no
+    LEFT JOIN latest_statement latest ON latest.account_no=c.account_no
+    LEFT JOIN current_statement current_cycle ON current_cycle.account_no=c.account_no
+    LEFT JOIN oldest_open_statement open_cycle ON open_cycle.account_no=c.account_no
   ${clientFilter}
 )
 `;

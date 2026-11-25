@@ -13,6 +13,13 @@ const { pagination } = require('../utils/pagination');
 
 router.use(requireAuth, requireRole('admin'));
 // Admin sees all branches; billing history is retained, while activity feeds use a six-month window.
+const wrap = fn => async (req, res, next) => {
+  try {
+    await fn(req, res, next);
+  } catch (err) {
+    next(err);
+  }
+};
 
 const SIX = "date_trunc('month', current_date) - interval '6 months'";
 
@@ -72,8 +79,8 @@ const periodAnalyticsSql = `
              ELSE 'Active'
            END AS effective_status
       FROM clients c
-      JOIN branch_scope b USING (branch_code)
-      JOIN account_summary summary USING (account_no)
+      JOIN branch_scope b ON b.branch_code=c.branch_code
+      JOIN account_summary summary ON summary.account_no=c.account_no
       CROSS JOIN selected_period period
       LEFT JOIN LATERAL (
         SELECT log.new_status
@@ -184,8 +191,8 @@ const periodAnalyticsSql = `
         'payment_date', COALESCE(p.payment_date, p.created_at::date)::text
       ) AS payment
         FROM payments p
-        JOIN clients c USING (account_no)
-        JOIN branch_scope b USING (branch_code)
+        JOIN clients c ON c.account_no=p.account_no
+        JOIN branch_scope b ON b.branch_code=c.branch_code
        WHERE ($1::text IS NULL OR TO_CHAR(COALESCE(p.payment_date, p.created_at::date), 'YYYY-MM')=$1)
        ORDER BY COALESCE(p.payment_date, p.created_at::date) DESC, p.payment_id DESC
        LIMIT 12
@@ -197,7 +204,7 @@ async function loadPeriodAnalytics(month, branchCode) {
 }
 
 // GET /api/admin/months -> continuous month range from the earliest billing/install date to Manila today
-router.get('/months', async (req, res) => {
+router.get('/months', wrap(async (req, res) => {
   try {
     const { rows } = await query(
       `WITH bounds AS (
@@ -219,10 +226,10 @@ router.get('/months', async (req, res) => {
     console.error('GET /api/admin/months failed:', e && (e.code || e.name) || 'Error');
     res.status(500).json({ error: 'Could not load billing months.' });
   }
-});
+}));
 
 // GET /api/admin/dashboard?month=2026-10&branch=04
-router.get('/dashboard', async (req, res) => {
+router.get('/dashboard', wrap(async (req, res) => {
   const month = selectedMonth(req.query.month);
   if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
   try {
@@ -231,10 +238,10 @@ router.get('/dashboard', async (req, res) => {
     console.error('GET /api/admin/dashboard failed:', e && (e.code || e.name) || 'Error');
     res.status(500).json({ error: 'Could not load dashboard analytics.' });
   }
-});
+}));
 
 // GET /api/admin/password-reset-requests
-router.get('/password-reset-requests', async (req, res) => {
+router.get('/password-reset-requests', wrap(async (req, res) => {
   try {
     const page = pagination(req);
     const { rows } = await query(
@@ -251,10 +258,10 @@ router.get('/password-reset-requests', async (req, res) => {
     console.error('GET /api/admin/password-reset-requests failed:', e && (e.code || e.name) || 'Error');
     res.status(500).json({ error: 'Could not load password reset requests.' });
   }
-});
+}));
 
 // POST /api/admin/password-reset-requests/:id/reset
-router.post('/password-reset-requests/:id/reset', async (req, res) => {
+router.post('/password-reset-requests/:id/reset', wrap(async (req, res) => {
   if (!/^[0-9]+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid password reset request.' });
   try {
     const result = await tx(async c => {
@@ -282,18 +289,18 @@ router.post('/password-reset-requests/:id/reset', async (req, res) => {
     console.error('POST /api/admin/password-reset-requests/:id/reset failed:', e && (e.code || e.name) || 'Error');
     res.status(publicErrorStatus(e, 500)).json({ error: publicErrorMessage(e, 'Could not reset the client password.') });
   }
-});
+}));
 
 // GET /api/admin/cancellations?branch=04
-router.get('/cancellations', async (req, res) => {
+router.get('/cancellations', wrap(async (req, res) => {
   try {
     const page = pagination(req);
     const { rows } = await query(
       `SELECT r.request_id, r.account_no, r.request_date, r.reason, r.status,
               c.name, b.name AS branch
          FROM cancellation_requests r
-         JOIN clients c USING (account_no)
-         JOIN branches b USING (branch_code)
+         JOIN clients c ON c.account_no=r.account_no
+         JOIN branches b ON b.branch_code=c.branch_code
         WHERE r.status='Pending'
           AND ($1::text IS NULL OR c.branch_code::text=$1::text)
            AND NOT EXISTS (
@@ -311,10 +318,10 @@ router.get('/cancellations', async (req, res) => {
     console.error('GET /api/admin/cancellations failed:', e && (e.code || e.name) || 'Error');
     res.status(500).json({ error: 'Could not load pending cancellation requests.' });
   }
-});
+}));
 
 // GET /api/admin/clients?branch=04&status=Active
-router.get('/clients', async (req, res) => {
+router.get('/clients', wrap(async (req, res) => {
   try {
     const page = pagination(req);
     const { rows } = await query(
@@ -361,9 +368,9 @@ router.get('/clients', async (req, res) => {
               TO_CHAR(summary.overdue_due_date, 'YYYY-MM-DD') AS overdue_due_date,
               TO_CHAR(c.grace_end_date, 'YYYY-MM-DD') AS grace_end_date
          FROM clients c
-         JOIN branches b USING (branch_code)
-         JOIN plans p USING (plan_id)
-         JOIN account_summary summary USING (account_no)
+         JOIN branches b ON b.branch_code=c.branch_code
+         JOIN plans p ON p.plan_id=c.plan_id
+         JOIN account_summary summary ON summary.account_no=c.account_no
         WHERE ($1::text IS NULL OR c.branch_code=$1)
           AND ($2::text IS NULL OR summary.effective_status=$2)
         ORDER BY c.branch_code, c.client_seq
@@ -375,10 +382,10 @@ router.get('/clients', async (req, res) => {
     console.error('GET /api/admin/clients failed:', e && (e.code || e.name) || 'Error');
     res.status(500).json({ error: publicErrorMessage(e, 'Could not load client records.') });
   }
-});
+}));
 
 // GET /api/admin/statements?month=2026-10&branch=04
-router.get('/statements', async (req, res) => {
+router.get('/statements', wrap(async (req, res) => {
   const month = selectedMonth(req.query.month);
   if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
   const page = pagination(req);
@@ -393,18 +400,18 @@ router.get('/statements', async (req, res) => {
                  WHEN COALESCE(statement_paid.verified_paid, 0) > 0 THEN 'Partially paid'
                  ELSE 'Unpaid' END AS payment_status,
             s.send_status, s.sent_by_admin, s.sent_at, s.created_at, c.name, c.branch_code
-       FROM statements s JOIN clients c USING (account_no)
-       JOIN account_summary summary USING (account_no)
+       FROM statements s JOIN clients c ON c.account_no=s.account_no
+       JOIN account_summary summary ON summary.account_no=c.account_no
        LEFT JOIN summary_payment_totals statement_paid ON statement_paid.statement_id=s.statement_id
       WHERE ($1::text IS NULL OR TO_CHAR(s.billing_month, 'YYYY-MM')=$1)
         AND ($2::text IS NULL OR c.branch_code=$2)
       ORDER BY s.billing_month DESC, s.account_no
       LIMIT $3 OFFSET $4`, [month, req.query.branch || null, page.limit, page.offset]);
   res.json(rows);
-});
+}));
 
 // GET /api/admin/payments?month=2026-11&branch=04&status=Verified
-router.get('/payments', async (req, res) => {
+router.get('/payments', wrap(async (req, res) => {
   const month = selectedMonth(req.query.month);
   if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
   const page = pagination(req);
@@ -414,9 +421,9 @@ router.get('/payments', async (req, res) => {
             summary.effective_status AS client_status,
             summary.previous_balance, summary.current_month_due, summary.total_balance
        FROM payments p
-       JOIN clients c USING (account_no)
+       JOIN clients c ON c.account_no=p.account_no
        JOIN branches b ON b.branch_code = c.branch_code
-       JOIN account_summary summary USING (account_no)
+       JOIN account_summary summary ON summary.account_no=c.account_no
       WHERE ($1::text IS NULL OR TO_CHAR(COALESCE(p.payment_date, p.created_at::date), 'YYYY-MM') = $1)
         AND ($2::text IS NULL OR c.branch_code = $2)
         AND ($3::text IS NULL OR p.status = $3)
@@ -425,16 +432,16 @@ router.get('/payments', async (req, res) => {
     [month, req.query.branch || null, req.query.status || null, page.limit, page.offset]
   );
   res.json(rows);
-});
+}));
 
 // POST /api/admin/statements/generate  -> run generation now (for demo / testing)
-router.post('/statements/generate', async (req, res) => {
+router.post('/statements/generate', wrap(async (req, res) => {
   const created = await generateStatementsForToday();
   res.json({ created });
-});
+}));
 
 // POST /api/admin/statements/:id/send   (send or re-send one statement)
-router.post('/statements/:id/send', async (req, res) => {
+router.post('/statements/:id/send', wrap(async (req, res) => {
   try {
     const ok = await sendStatement(req.params.id, req.user.userId);
     await tx(c => logActivity(c, req.user.userId, null, `Sent statement #${req.params.id} (${ok ? 'Delivered' : 'Failed'})`));
@@ -442,21 +449,21 @@ router.post('/statements/:id/send', async (req, res) => {
   } catch (e) {
     res.status(publicErrorStatus(e, 404)).json({ error: publicErrorMessage(e, 'Could not send statement.') });
   }
-});
+}));
 
 // GET /api/admin/notices?status=Failed
-router.get('/notices', async (req, res) => {
+router.get('/notices', wrap(async (req, res) => {
   const page = pagination(req);
   const { rows } = await query(
-    `SELECT n.*, c.name FROM notices n JOIN clients c USING (account_no)
+    `SELECT n.*, c.name FROM notices n JOIN clients c ON c.account_no=n.account_no
       WHERE n.notice_date >= (${SIX}) AND ($1::text IS NULL OR n.delivery_status=$1)
       ORDER BY n.created_at DESC, n.notice_id DESC LIMIT $2 OFFSET $3`,
     [req.query.status || null, page.limit, page.offset]);
   res.json(rows);
-});
+}));
 
 // POST /api/admin/notices/:id/resend
-router.post('/notices/:id/resend', async (req, res) => {
+router.post('/notices/:id/resend', wrap(async (req, res) => {
   const n = (await query('SELECT * FROM notices WHERE notice_id=$1', [req.params.id])).rows[0];
   if (!n) return res.status(404).json({ error: 'Notice not found' });
   const ok = n.channel === 'Email' ? await sendEmail(n.recipient, n.notice_type, n.message || 'Resent notice') : true;
@@ -466,10 +473,10 @@ router.post('/notices/:id/resend', async (req, res) => {
     await logActivity(c, req.user.userId, null, `Resent notice #${n.notice_id}`);
   });
   res.json({ delivered: ok });
-});
+}));
 
 // PATCH /api/admin/clients/:accountNo
-router.patch('/clients/:accountNo', async (req, res) => {
+router.patch('/clients/:accountNo', wrap(async (req, res) => {
   if (/\s/.test(req.params.accountNo)) return res.status(400).json({ error: 'Account number must not contain whitespace.' });
   const b = req.body || {};
   const name = String(b.name || '').trim();
@@ -550,10 +557,10 @@ router.patch('/clients/:accountNo', async (req, res) => {
   } catch (e) {
     res.status(publicErrorStatus(e, 400)).json({ error: publicErrorMessage(e, 'Could not update client details.') });
   }
-});
+}));
 
 // POST /api/admin/clients/:accountNo/reset-password
-router.post('/clients/:accountNo/reset-password', async (req, res) => {
+router.post('/clients/:accountNo/reset-password', wrap(async (req, res) => {
   const accountNo = String(req.params.accountNo || '').trim();
   if (!/^[0-9]{8}$/.test(accountNo)) return res.status(400).json({ error: 'Account number must be 8 digits.' });
   try {
@@ -567,10 +574,10 @@ router.post('/clients/:accountNo/reset-password', async (req, res) => {
     console.error('POST /api/admin/clients/:accountNo/reset-password failed:', e && (e.code || e.name) || 'Error');
     res.status(publicErrorStatus(e, 500)).json({ error: publicErrorMessage(e, 'Could not reset client password.') });
   }
-});
+}));
 
 // PATCH /api/admin/clients/:accountNo/status  { status: 'Active'|'Terminated', reason }
-router.patch('/clients/:accountNo/status', async (req, res) => {
+router.patch('/clients/:accountNo/status', wrap(async (req, res) => {
   if (/\s/.test(req.params.accountNo)) return res.status(400).json({ error: 'Account number must not contain whitespace.' });
   const { status, reason } = req.body || {};
   if (!['Active', 'Terminated'].includes(status)) return res.status(400).json({ error: 'Use Active or Terminated' });
@@ -584,17 +591,17 @@ router.patch('/clients/:accountNo/status', async (req, res) => {
   } catch (e) {
     res.status(publicErrorStatus(e, 400)).json({ error: publicErrorMessage(e, 'Could not update client status.') });
   }
-});
+}));
 
 // GET /api/admin/clients/:accountNo/status-log
-router.get('/clients/:accountNo/status-log', async (req, res) => {
+router.get('/clients/:accountNo/status-log', wrap(async (req, res) => {
   if (/\s/.test(req.params.accountNo)) return res.status(400).json({ error: 'Account number must not contain whitespace.' });
   const { rows } = await query('SELECT * FROM account_status_log WHERE account_no=$1 ORDER BY changed_at DESC', [req.params.accountNo]);
   res.json(rows);
-});
+}));
 
 // GET /api/admin/analytics?month=2026-10&branch=04
-router.get('/analytics', async (req, res) => {
+router.get('/analytics', wrap(async (req, res) => {
   const month = selectedMonth(req.query.month);
   if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
   try {
@@ -603,10 +610,10 @@ router.get('/analytics', async (req, res) => {
     console.error('GET /api/admin/analytics failed:', e && (e.code || e.name) || 'Error');
     res.status(500).json({ error: 'Could not load branch analytics.' });
   }
-});
+}));
 
 // GET /api/admin/activity?branch=04  (6 months)
-router.get('/activity', async (req, res) => {
+router.get('/activity', wrap(async (req, res) => {
   const page = pagination(req, 500);
   const { rows } = await query(
     `SELECT a.*, u.login_id FROM activity_log a JOIN users u USING (user_id)
@@ -614,27 +621,27 @@ router.get('/activity', async (req, res) => {
       ORDER BY a.logged_at DESC, a.log_id DESC LIMIT $2 OFFSET $3`,
     [req.query.branch || null, page.limit, page.offset]);
   res.json(rows);
-});
+}));
 
 // POST /api/admin/run-daily  -> trigger the daily job by hand (for the defense demo)
-router.post('/run-daily', async (req, res) => {
+router.post('/run-daily', wrap(async (req, res) => {
   const created = await generateStatementsForToday();
   const status = await runStatusEngine();
   res.json({ statementsCreated: created, status });
-});
+}));
 
 // GET /api/admin/users?q=bagong  -> find any client / staff / admin account (no passwords are ever returned)
-router.get('/users', async (req, res) => {
+router.get('/users', wrap(async (req, res) => {
   const { rows } = await query(
     `SELECT u.user_id, u.login_id, u.role, u.is_active, c.email, COALESCE(a.full_name, s.full_name, c.name) AS name
        FROM users u LEFT JOIN admins a ON a.user_id=u.user_id LEFT JOIN staff s ON s.user_id=u.user_id LEFT JOIN clients c ON c.user_id=u.user_id
       WHERE $1::text IS NULL OR u.login_id ILIKE '%'||$1||'%' OR c.name ILIKE '%'||$1||'%' OR c.email ILIKE '%'||$1||'%'
       ORDER BY u.role, u.login_id LIMIT 100`, [req.query.q || null]);
   res.json(rows);
-});
+}));
 
 // POST /api/admin/users/:userId/reset-password  { newPassword }
-router.post('/users/:userId/reset-password', async (req, res) => {
+router.post('/users/:userId/reset-password', wrap(async (req, res) => {
   const pw = (req.body || {}).newPassword;
   if (typeof pw !== 'string' || pw.length < 8 || pw.length > 72 || /\s/.test(pw)) {
     return res.status(400).json({ error: 'Password must be 8 to 72 characters and must not contain whitespace.' });
@@ -652,6 +659,6 @@ router.post('/users/:userId/reset-password', async (req, res) => {
     await logActivity(c, req.user.userId, null, `Reset password of ${target.login_id}`);
   });
   res.json({ ok: true });
-});
+}));
 
 module.exports = router;

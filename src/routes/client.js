@@ -10,7 +10,13 @@ const {
 const { pagination } = require('../utils/pagination');
 
 router.use(requireAuth, requireRole('client'), requirePasswordChangeComplete);
-const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
+const wrap = fn => async (req, res, next) => {
+  try {
+    await fn(req, res, next);
+  } catch (err) {
+    next(err);
+  }
+};
 
 // GET /api/client/me  -> account overview (dates are sent as plain YYYY-MM-DD text, no time-zone shifting)
 router.get('/me', wrap(async (req, res) => {
@@ -30,8 +36,9 @@ router.get('/me', wrap(async (req, res) => {
             TO_CHAR(summary.current_due_date, 'YYYY-MM-DD') AS current_due_date,
             (SELECT row_to_json(r) FROM (SELECT status, request_date::text AS request_date FROM cancellation_requests
               WHERE account_no = c.account_no ORDER BY request_id DESC LIMIT 1) r) AS cancel
-       FROM clients c JOIN plans p USING (plan_id) JOIN branches b USING (branch_code)
-       JOIN account_summary summary USING (account_no)
+       FROM clients c JOIN plans p ON p.plan_id=c.plan_id
+       JOIN branches b ON b.branch_code=c.branch_code
+       JOIN account_summary summary ON summary.account_no=c.account_no
       WHERE c.account_no = $1`, [req.user.accountNo]);
   res.json(rows[0]);
 }));
@@ -50,7 +57,7 @@ router.get('/statements', wrap(async (req, res) => {
                  WHEN COALESCE(statement_paid.verified_paid, 0) > 0 THEN 'Partially paid'
                  ELSE 'Unpaid' END AS payment_status
        FROM v_client_statements s
-       JOIN account_summary summary USING (account_no)
+       JOIN account_summary summary ON summary.account_no=s.account_no
        LEFT JOIN summary_payment_totals statement_paid ON statement_paid.statement_id=s.statement_id
       WHERE s.account_no=$1 ORDER BY s.billing_month DESC LIMIT $2 OFFSET $3`,
     [req.user.accountNo, page.limit, page.offset]);
@@ -143,8 +150,8 @@ router.post('/payments', wrap(async (req, res) => {
             COALESCE(paid.verified_paid, 0) AS verified_paid,
             s.due_date < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date AS is_past_due,
             GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) AS remaining_balance
-       FROM statements s JOIN clients c USING (account_no)
-       JOIN account_summary summary USING (account_no)
+       FROM statements s JOIN clients c ON c.account_no=s.account_no
+       JOIN account_summary summary ON summary.account_no=c.account_no
        LEFT JOIN summary_payment_totals paid ON paid.statement_id=s.statement_id
       WHERE s.statement_id=$1 AND s.account_no=$2`, [statementId, req.user.accountNo])).rows[0];
   if (!s) return res.status(404).json({ error: 'Statement not found' });
