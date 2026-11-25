@@ -11,12 +11,12 @@ function cur() {
   s.paid = verifiedPaid(s); s.balance = Math.max(0, Number(s.amount || 0) - s.paid);
   return s;
 }
-function mapStmt(s) { return { id: s.statement_id, inv: s.invoice_no, month: String(s.billing_month || "").slice(0, 7), bill: s.issued_date, due: s.due_date, amount: Number(s.amount), paid: Number(s.amount_paid), balance: Number(s.balance), pay: s.payment_status, partialLocked: Number(s.amount_paid) > 0 || String(s.stored_payment_status || s.payment_status || "").toLowerCase() == "partially paid" }; }
+function mapStmt(s) { return { id: s.statement_id, inv: s.invoice_no, month: String(s.billing_month || "").slice(0, 7), bill: s.issued_date, due: s.due_date, amount: Number(s.amount), paid: Number(s.amount_paid), balance: Number(s.balance), pay: s.payment_status, partialLocked: false }; }
 function cycleLabel(s) {
   if (!STM.length) return "No statement yet"; if (s.balance == 0) return "Paid"; if (ME.hasPending) return "Awaiting verification"; if (s.paid > 0) return "Partially paid";
   var d = dayDiff(s.due, todayISO()); return d == 0 ? "Due today" : d > 0 ? "Due in " + d + " day" + (d == 1 ? "" : "s") : "Overdue";
 }
-function pillClass(l) { return l == "Paid" ? "paid" : (l == "Awaiting verification" || l == "Partially paid") ? "wait" : (l == "Overdue" || l == "Rejected") ? "rej" : ""; }
+function pillClass(l) { return l == "Paid" ? "paid" : (l == "Awaiting verification" || l == "Partially paid") ? "wait" : (l == "Overdue" || l == "Rejected" || l == "Terminated") ? "rej" : ""; }
 function pill(l, id) { return "<span class='c-pill " + pillClass(l) + "'" + (id ? " id='" + id + "'" : "") + ">" + l + "</span>"; }
 function canPayNow() {
   return STM.length > 0 && cur().balance > 0 && !ME.hasPending;
@@ -38,12 +38,12 @@ function toggleBell() { $("bell").classList.toggle("hidden"); }
 /* cancellation banner + button state */
 function cancelState() {
   var r = ME.cancel;
-  if (ME.status == "Terminated") return { banner: "<div class='c-banner red'><b>Your account has been terminated.</b> Please contact your branch if you want to be reconnected.</div>", can: false };
+  if (ME.status == "Terminated") return { banner: "<div class='c-banner red'><b>Your account has been terminated.</b> You may settle your remaining balance online or at your branch to restore your Active connection.</div>", can: false };
   if (ME.status == "Under Review" && ME.reason == "Client Cancellation Request") return { banner: "<div class='c-banner blue'><b>Cancellation approved by branch staff.</b> Your request is now under review by the Administrator. We will notify you once it is final.</div>", can: false };
   if (r && r.status == "Pending") return { banner: "<div class='c-banner amber'><b>Cancellation request sent</b> on " + fmtD(r.request_date) + ". Branch staff are reviewing it.</div>", can: false, pending: true };
   if (r && r.status == "Rejected") return { banner: "<div class='c-banner blue'><b>Your cancellation request was declined</b> by branch staff. Your connection stays active. You may submit a new request.</div>", can: true };
   if (ME.status == "Grace Period") return { banner: "<div class='c-banner amber'><b>Your account is in the grace period.</b> Please settle your balance by " + (ME.graceEnd ? fmtD(ME.graceEnd) : "the grace end date") + " to avoid disconnection.</div>", can: true };
-  if (ME.status == "Under Review") return { banner: "<div class='c-banner amber'><b>Your account is under review</b> because of unpaid balance.</div>", can: false };
+  if (ME.status == "Under Review") return { banner: "<div class='c-banner amber'><b>Your account is under review</b> because of unpaid balance. Please settle your balance to restore Active status.</div>", can: false };
   return { banner: "", can: true };
 }
 function cancelBtn() { var st = cancelState(); return st.can || st.pending ? "<button class='c-btn ghost' " + (st.pending ? "disabled" : "") + " onclick='requestCancel()'>" + (st.pending ? "Cancellation pending" : "Request cancellation") + "</button>" : ""; }
@@ -74,15 +74,16 @@ function renderClient() {
 }
 function updatePaymentOptions(s) {
   var select = $("paytype"), full = select.querySelector("option[value='full']"), partial = select.querySelector("option[value='partial']");
-  var terminated = String(ME.status || "").toLowerCase() == "terminated";
-  var partialAlreadyPaid = (terminated || s.paid > 0 || s.partialLocked) && s.balance > 0;
-  partial.disabled = partialAlreadyPaid; partial.hidden = partialAlreadyPaid;
-  full.textContent = partialAlreadyPaid ? "Full Payment (Remaining Balance)" : "Full payment";
-  if (partialAlreadyPaid && select.value == "partial") select.value = "full";
+  var halfAmount = Math.min(Number(ME.rate) / 2, remainingBalance(s));
+  var canPartial = s.balance > 0 && halfAmount > 0 && halfAmount < remainingBalance(s);
+  partial.disabled = !canPartial;
+  partial.hidden = !canPartial;
+  full.textContent = s.paid > 0 && s.balance > 0 ? "Full Payment (Remaining Balance)" : "Full payment";
+  if (!canPartial && select.value == "partial") select.value = "full";
 }
 function payAmount() {
   var s = cur(), remaining = remainingBalance(s);
-  return val("paytype") == "partial" && String(ME.status || "").toLowerCase() != "terminated"
+  return val("paytype") == "partial"
     ? Math.min(Number(ME.rate) / 2, remaining)
     : remaining;
 }
@@ -95,9 +96,7 @@ function updatePay() {
   $("payamt").innerHTML = peso(amount); $("pay-total").innerHTML = peso(s.amount);
   $("pay-previous").innerHTML = peso(s.paid); $("pay-current").innerHTML = peso(amount);
   $("pay-remaining").innerHTML = peso(Math.max(0, Number(s.amount) - s.paid - amount));
-  $("partialnote").textContent = s.paid > 0 && s.balance > 0
-    ? "A partial payment has already been verified. Please pay the full remaining balance."
-    : "After staff verify your half. Once your account is in the grace period, the full amount is required.";
+  $("partialnote").textContent = "Your account will automatically return to Active status once your full balance is verified.";
 }
 function cancelPay() { $("ref").value = ""; $("referr").innerHTML = ""; $("paytype").value = ""; updatePay(); }
 function submitPayment() {                                             // goes to the staff Payments Verification Queue
@@ -162,7 +161,7 @@ function populateStatementMonths() {
   var select = $("statement-month");
   if (!select) return;
   var selected = STMT_FILTER;
-  select.innerHTML = "<option value=''>All available months</option>" + STMT_MONTHS.map(function (month) {
+  select.innerHTML = "<option value=''>Last 12 months</option>" + STMT_MONTHS.map(function (month) {
     return "<option value='" + esc(month) + "'>" + esc(monthLabel(month)) + "</option>";
   }).join("");
   select.value = STMT_MONTHS.indexOf(selected) >= 0 ? selected : "";
@@ -191,8 +190,8 @@ function ago(v) {
 }
 function noteItem(n) {
   var first = ME.name.split(" ")[0], a = n.amount != null ? pesoPlain(n.amount) : "", d = n.due_date ? fmtD(n.due_date) : "", t, b;
-  if (n.notice_type == "7-Day Billing Notice") { t = "e-Statement ready: " + a + " due " + d; b = "Hi " + first + ",\n\nyour e-Statement " + n.invoice_no + " is ready. Amount due: " + a + ".\n\nDue date: " + d + ".\n\nOn or before the due date you can pay in full, or pay half. Pay with GCash and submit your 13-digit reference number in the portal, or pay in cash at the " + ME.branch + " branch."; }
-  else if (n.notice_type == "Disconnection Warning") { t = "Payment overdue: " + a + " was due " + d; b = "Hi " + first + ",\n\nyour e-Statement " + (n.invoice_no || "") + " is overdue and your account is now in the grace period. Please pay the full balance before the grace period ends to avoid disconnection."; }
+  if (n.notice_type == "7-Day Billing Notice") { t = "e-Statement ready: " + a + " due " + d; b = "Hi " + first + ",\n\nyour e-Statement " + n.invoice_no + " is ready. Amount due: " + a + ".\n\nDue date: " + d + ".\n\nYou can pay in full or submit a partial payment. Pay with GCash and submit your 13-digit reference number in the portal, or pay in cash at the " + ME.branch + " branch."; }
+  else if (n.notice_type == "Disconnection Warning") { t = "Payment overdue: " + a + " was due " + d; b = "Hi " + first + ",\n\nyour e-Statement " + (n.invoice_no || "") + " is overdue and your account is now in the grace period. Please settle your balance to keep your connection active."; }
   else if (n.notice_type == "Payment Receipt") { t = "Payment received"; b = "Hi " + first + ",\n\n" + (n.message || "we received your payment. Thank you!"); }
   else { t = n.message && /could not match/.test(n.message) ? "Payment not accepted" : "Notice from FiberTec"; b = "Hi " + first + ",\n\n" + (n.message || "Please check your account for details."); }
   return { id: n.notice_id, title: t, body: b, when: ago(n.created_at), read: n.is_read };

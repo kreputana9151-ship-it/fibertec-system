@@ -369,7 +369,7 @@ router.get('/payments', wrap(async (req, res) => {
   res.json(rows);
 }));
 
-// POST /api/staff/payments/cash
+// POST /api/staff/payments/cash (allows Active, Grace Period, Under Review, and Terminated clients to pay remaining balances)
 router.post('/payments/cash', wrap(async (req, res) => {
   const { statementId, amount } = req.body || {};
   try {
@@ -379,7 +379,6 @@ router.post('/payments/cash', wrap(async (req, res) => {
          SELECT s.*, summary.effective_status AS client_status,
                 summary.previous_balance, summary.current_month_due, summary.total_balance,
                 COALESCE(paid.verified_paid, 0) AS verified_paid,
-                s.due_date < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date AS is_past_due,
                 GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) AS remaining_balance
            FROM statements s JOIN clients cl ON cl.account_no=s.account_no
            JOIN account_summary summary ON summary.account_no=cl.account_no
@@ -390,14 +389,7 @@ router.post('/payments/cash', wrap(async (req, res) => {
       const amt = Number(amount);
       const remainingBalance = Number(s.remaining_balance);
       if (!(amt > 0) || amt > remainingBalance) throw new Error('Payment amount must be greater than 0 and not exceed the remaining balance.');
-      const pastDue = s.is_past_due;
       const isFull = amt === remainingBalance;
-      const terminated = String(s.client_status).toLowerCase() === 'terminated';
-      if ((terminated || Number(s.verified_paid) > 0 || String(s.payment_status).toLowerCase() === 'partially paid') && !isFull)
-        throw new Error(terminated
-          ? 'Terminated accounts must pay the full remaining balance.'
-          : 'A partially paid statement requires full payment of its remaining balance.');
-      if (pastDue && !isFull) throw new Error('Account is past due: full remaining balance is required.');
       const p = await c.query(
         `INSERT INTO payments (statement_id, account_no, amount, method, payment_type, payment_date)
          VALUES ($1,$2,$3,'Cash',$4,current_date) RETURNING payment_id`,

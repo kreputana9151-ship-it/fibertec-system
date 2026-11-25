@@ -43,7 +43,7 @@ router.get('/me', wrap(async (req, res) => {
   res.json(rows[0]);
 }));
 
-// Statement and payment history is served in bounded pages.
+// Statement and payment history is bounded to the last 12 months in the Client Portal.
 router.get('/statements', wrap(async (req, res) => {
   const page = pagination(req);
   const { rows } = await query(
@@ -59,17 +59,22 @@ router.get('/statements', wrap(async (req, res) => {
        FROM v_client_statements s
        JOIN account_summary summary ON summary.account_no=s.account_no
        LEFT JOIN summary_payment_totals statement_paid ON statement_paid.statement_id=s.statement_id
-      WHERE s.account_no=$1 ORDER BY s.billing_month DESC LIMIT $2 OFFSET $3`,
+      WHERE s.account_no=$1
+        AND s.billing_month >= (date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date) - INTERVAL '11 months')::date
+      ORDER BY s.billing_month DESC LIMIT $2 OFFSET $3`,
     [req.user.accountNo, page.limit, page.offset]);
   res.json(rows);
 }));
 router.get('/statement-months', wrap(async (req, res) => {
   const { rows } = await query(
     `WITH bounds AS (
-       SELECT date_trunc('month', LEAST(
-                COALESCE(MIN(s.billing_month), MIN(c.installed_date)),
-                COALESCE(MIN(c.installed_date), MIN(s.billing_month))
-              ))::date AS first_month,
+       SELECT GREATEST(
+                date_trunc('month', LEAST(
+                  COALESCE(MIN(s.billing_month), MIN(c.installed_date)),
+                  COALESCE(MIN(c.installed_date), MIN(s.billing_month))
+                ))::date,
+                (date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date) - INTERVAL '11 months')::date
+              ) AS first_month,
               date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date)::date AS last_month
          FROM clients c
          LEFT JOIN statements s ON s.account_no=c.account_no
@@ -89,7 +94,10 @@ router.get('/payments', wrap(async (req, res) => {
   const page = pagination(req);
   const { rows } = await query(
     `SELECT payment_id, statement_id, amount, method, payment_type, reference_no, or_no, status, payment_date::text, created_at
-       FROM v_client_payments WHERE account_no=$1 ORDER BY created_at DESC, payment_id DESC LIMIT $2 OFFSET $3`,
+       FROM v_client_payments
+      WHERE account_no=$1
+        AND COALESCE(payment_date, (created_at AT TIME ZONE 'Asia/Manila')::date) >= (date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date) - INTERVAL '11 months')::date
+      ORDER BY created_at DESC, payment_id DESC LIMIT $2 OFFSET $3`,
     [req.user.accountNo, page.limit, page.offset]);
   res.json(rows);
 }));
@@ -114,10 +122,15 @@ router.post('/notices/:id/read', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// GET /api/client/statements/:id/pdf  -> downloadable e-Statement
+// GET /api/client/statements/:id/pdf  -> downloadable e-Statement (restricted to 12-month client window)
 router.get('/statements/:id/pdf', wrap(async (req, res) => {
   if (!/^[0-9]+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid statement' });
-  const own = await query('SELECT 1 FROM v_client_statements WHERE statement_id=$1 AND account_no=$2', [req.params.id, req.user.accountNo]);
+  const own = await query(
+    `SELECT 1 FROM v_client_statements
+      WHERE statement_id=$1 AND account_no=$2
+        AND billing_month >= (date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date) - INTERVAL '11 months')::date`,
+    [req.params.id, req.user.accountNo]
+  );
   const d = own.rowCount ? await loadStatement(query, req.params.id) : null;
   if (!d) return res.status(404).json({ error: 'Statement not found' });
   const { s, pays } = d;
@@ -127,7 +140,7 @@ router.get('/statements/:id/pdf', wrap(async (req, res) => {
 }));
 
 // POST /api/client/payments  { statementId, amount, referenceNo }   (GCash reference, goes to Pending = joins the staff FIFO queue)
-// Rules: partial only on/before due date; after the due date the FULL balance is required.
+// Clients in Active, Grace Period, Flagged, or Terminated status can submit payments whenever a balance remains.
 router.post('/payments', wrap(async (req, res) => {
   const body = req.body || {};
   const { statementId, amount } = body;
@@ -148,7 +161,6 @@ router.post('/payments', wrap(async (req, res) => {
      SELECT s.*, summary.effective_status AS client_status,
             summary.previous_balance, summary.current_month_due, summary.total_balance,
             COALESCE(paid.verified_paid, 0) AS verified_paid,
-            s.due_date < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date AS is_past_due,
             GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) AS remaining_balance
        FROM statements s JOIN clients c ON c.account_no=s.account_no
        JOIN account_summary summary ON summary.account_no=c.account_no
@@ -156,22 +168,13 @@ router.post('/payments', wrap(async (req, res) => {
       WHERE s.statement_id=$1 AND s.account_no=$2`, [statementId, req.user.accountNo])).rows[0];
   if (!s) return res.status(404).json({ error: 'Statement not found' });
   const remainingBalance = Number(s.remaining_balance);
-  const verifiedPaid = Number(s.verified_paid);
-  const partialStatement = verifiedPaid > 0 || String(s.payment_status).toLowerCase() === 'partially paid';
-  const terminated = String(s.client_status).toLowerCase() === 'terminated';
   if (remainingBalance <= 0) return res.status(400).json({ error: 'Already fully paid' });
   if ((await query("SELECT 1 FROM payments WHERE account_no=$1 AND status='Pending'", [req.user.accountNo])).rowCount)
     return res.status(409).json({ error: 'You already have a payment waiting for staff verification' });
 
   const amt = Number(amount);
   if (!(amt > 0) || amt > remainingBalance) return res.status(400).json({ error: 'Invalid amount' });
-  const pastDue = s.is_past_due;
   const isFull = amt === remainingBalance;
-  if ((partialStatement || terminated) && !isFull)
-    return res.status(400).json({ error: terminated
-      ? 'Terminated accounts must pay the full remaining balance.'
-      : 'A partially paid statement requires full payment of its remaining balance.' });
-  if (pastDue && !isFull) return res.status(400).json({ error: 'After the due date the full balance is required' });
 
   try {
     const r = await query(

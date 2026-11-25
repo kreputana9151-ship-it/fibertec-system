@@ -145,12 +145,13 @@ function cashFigures() {
   var s = CASH[val("cash-client")]; if (!s) return null;
   var total = Number(s.amount || 0), previous = Number(s.amount_paid || 0), remaining = Math.max(0, total - previous);
   var partialOption = $("cash-type").options[1];
-  var terminated = String(s.client_status || "").toLowerCase() == "terminated";
-  var partialAlreadyPaid = (terminated || previous > 0 || String(s.payment_status || "").toLowerCase() == "partially paid" || String(s.stored_payment_status || "").toLowerCase() == "partially paid") && remaining > 0;
-  partialOption.disabled = partialAlreadyPaid; partialOption.hidden = partialAlreadyPaid;
-  if (partialAlreadyPaid && val("cash-type") == "Partial payment") $("cash-type").value = "Full payment";
-  $("cash-type").options[0].textContent = partialAlreadyPaid ? "Full Payment (Remaining Balance)" : "Full payment";
-  var partial = val("cash-type") == "Partial payment", amount = partial ? Math.min(Number(s.monthly_rate) / 2, remaining) : remaining;
+  var halfAmount = Math.min(Number(s.monthly_rate) / 2, remaining);
+  var canPartial = remaining > 0 && halfAmount > 0 && halfAmount < remaining;
+  partialOption.disabled = !canPartial;
+  partialOption.hidden = !canPartial;
+  if (!canPartial && val("cash-type") == "Partial payment") $("cash-type").value = "Full payment";
+  $("cash-type").options[0].textContent = previous > 0 && remaining > 0 ? "Full Payment (Remaining Balance)" : "Full payment";
+  var partial = val("cash-type") == "Partial payment", amount = partial ? halfAmount : remaining;
   return { statement_total: total, verified_paid: previous, amount: amount };
 }
 function updateCashPreview() {

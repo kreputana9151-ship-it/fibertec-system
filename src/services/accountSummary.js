@@ -87,6 +87,10 @@ account_summary AS (
          current_cycle.due_date AS current_due_date,
          open_cycle.due_date AS overdue_due_date,
          CASE
+           WHEN COALESCE(t.total_balance, 0) = 0 AND c.status <> 'Terminated' THEN 'Active'
+           WHEN COALESCE(t.total_balance, 0) = 0
+            AND LOWER(BTRIM(COALESCE(c.termination_reason, ''))) IN ('non-payment', 'no admin decision within 3 days', '')
+             THEN 'Active'
            WHEN COALESCE(t.previous_balance, 0) > 0 THEN 'Terminated'
            WHEN c.status='Terminated'
             AND LOWER(BTRIM(COALESCE(c.termination_reason, ''))) NOT IN ('non-payment', 'no admin decision within 3 days')

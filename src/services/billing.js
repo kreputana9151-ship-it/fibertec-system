@@ -99,9 +99,9 @@ async function generateStatementsForToday(today = new Date()) {
                     CASE WHEN latest.due_date IS NULL THEN 1
                          ELSE (
                            (EXTRACT(YEAR FROM latest.due_date)::int
-                             - EXTRACT(YEAR FROM cl.installed_date)::int) * 12
+- EXTRACT(YEAR FROM cl.installed_date)::int) * 12
                            + EXTRACT(MONTH FROM latest.due_date)::int
-                           - EXTRACT(MONTH FROM cl.installed_date)::int + 1
+- EXTRACT(MONTH FROM cl.installed_date)::int + 1
                          )
                     END
                   ))::date AS due_month,
@@ -181,8 +181,8 @@ async function sendStatement(statementId, adminUserId) {
   const s = rows[0];
   const money = n => 'PHP ' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const paymentInstructions = Number(s.amount_paid) > 0 && Number(s.balance) > 0
-    ? 'A partial payment has already been verified. Please pay the full remaining balance.'
-    : 'On or before the due date you can pay in full, or pay half.';
+    ? 'A partial payment has already been verified. Please pay the remaining balance.'
+    : 'You can pay in full or submit a partial payment.';
   let attachments = [];
   try { const d = await loadStatement(query, statementId); attachments = [{ name: `FiberTec-Statement-${s.invoice_no.replace(/[^A-Za-z0-9-]+/g, '')}.pdf`, content: (await pdfBuffer(d.s, d.pays)).toString('base64') }]; }
   catch (e) { console.error('[statement pdf]', e.message); }
@@ -222,8 +222,7 @@ async function runStatusEngine() {
      SELECT c.account_no
        FROM clients c
        JOIN account_summary summary USING (account_no)
-      WHERE c.status='Terminated'
-        AND LOWER(BTRIM(COALESCE(c.termination_reason, ''))) IN ('non-payment', 'no admin decision within 3 days')
+      WHERE c.status IN ('Grace Period', 'Under Review', 'Terminated')
         AND summary.total_balance=0`
   );
   for (const r of paidTerminations.rows) {
@@ -313,7 +312,6 @@ async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
   if (!p || p.status !== 'Pending') throw new Error('Pending payment not found.');
   const s = (await c.query('SELECT * FROM statements WHERE statement_id=$1 FOR UPDATE', [p.statement_id])).rows[0];
   if (!s || s.account_no !== p.account_no) throw new Error('Payment statement not found.');
-  const accountSummary = await loadAccountSummary(c, p.account_no);
   const verified = Number((await c.query(
     `SELECT COALESCE(SUM(amount), 0) AS total
        FROM payments WHERE statement_id=$1 AND status='Verified'`, [s.statement_id]
@@ -323,11 +321,6 @@ async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
     const excess = Number(p.amount) - remaining;
     throw new Error(`Payment exceeds the remaining statement balance by PHP ${excess.toFixed(2)}. Reject this payment instead of verifying it.`);
   }
-  const terminated = accountSummary && accountSummary.effective_status === 'Terminated';
-  if ((terminated || verified > 0 || String(s.payment_status).toLowerCase() === 'partially paid') && Number(p.amount) !== remaining)
-    throw new Error(terminated
-      ? 'Terminated accounts must pay the full remaining balance.'
-      : 'A partially paid statement requires full payment of its remaining balance.');
 
   const paid = verified + Number(p.amount);
   const balance = Math.max(Number(s.amount) - paid, 0);
@@ -353,13 +346,10 @@ async function applyVerifiedPayment(c, paymentId, staffUserId, branchCode) {
   );
 
   const cl = (await c.query(
-    'SELECT status, current_balance, termination_reason FROM clients WHERE account_no=$1 FOR UPDATE', [p.account_no]
+    'SELECT status, current_balance FROM clients WHERE account_no=$1 FOR UPDATE', [p.account_no]
   )).rows[0];
-  if (Number(cl.current_balance) === 0) {
-    const nonPaymentTermination = cl.status === 'Terminated'
-      && ['non-payment', 'no admin decision within 3 days'].includes(String(cl.termination_reason || '').trim().toLowerCase());
-    if (['Grace Period', 'Under Review'].includes(cl.status) || nonPaymentTermination)
-      await changeStatus(c, p.account_no, 'Active', 'Full balance paid', staffUserId);
+  if (Number(cl.current_balance) === 0 && ['Grace Period', 'Under Review', 'Terminated'].includes(cl.status)) {
+    await changeStatus(c, p.account_no, 'Active', 'Full balance paid', staffUserId);
   }
   const msg = `We received your ${p.method} payment of PHP ${Number(p.amount).toFixed(2)}. Previous verified payments: PHP ${verified.toFixed(2)}. Remaining balance: PHP ${balance.toFixed(2)} (${p.reference_no ? `Ref ${p.reference_no}, ` : ''}O.R. ${orNo}). Thank you!`;
   const rc = { accountNo: p.account_no, statementId: s.statement_id, type: 'Payment Receipt', message: msg };
