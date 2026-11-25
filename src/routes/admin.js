@@ -55,28 +55,40 @@ const periodAnalyticsSql = `
            (COALESCE(
              TO_DATE($1, 'YYYY-MM'),
              date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date)::date
-           ) + INTERVAL '1 month - 1 day')::date AS month_end
+           ) + INTERVAL '1 month - 1 day')::date AS month_end,
+           date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date)::date AS current_month
   ),
   branch_scope AS (
     SELECT branch_code, name FROM branches
      WHERE ($2::text IS NULL OR branch_code=$2)
   ),
   period_population AS (
-    SELECT c.account_no, c.branch_code, c.plan_id, summary.effective_status
+    SELECT c.account_no, c.branch_code, c.plan_id,
+           CASE
+             WHEN period.month_start = period.current_month THEN summary.effective_status
+             WHEN history.new_status IS NOT NULL THEN history.new_status
+             WHEN c.termination_date <= period.month_end THEN 'Terminated'
+             ELSE 'Active'
+           END AS effective_status
       FROM clients c
       JOIN branch_scope b USING (branch_code)
       JOIN account_summary summary USING (account_no)
       CROSS JOIN selected_period period
+      LEFT JOIN LATERAL (
+        SELECT log.new_status
+          FROM account_status_log log
+         WHERE log.account_no = c.account_no
+           AND (log.changed_at AT TIME ZONE 'Asia/Manila')::date <= period.month_end
+         ORDER BY log.changed_at DESC, log.log_id DESC
+         LIMIT 1
+      ) history ON TRUE
      WHERE c.installed_date <= period.month_end
-       AND (c.status <> 'Terminated' OR c.termination_date IS NULL
-            OR c.termination_date >= period.month_start)
   ),
   client_totals AS (
-    SELECT c.branch_code, COUNT(*)::int AS client_count,
-           COUNT(*) FILTER (WHERE c.status='Active')::int AS active_count
-      FROM clients c
-      JOIN branch_scope b USING (branch_code)
-     GROUP BY c.branch_code
+    SELECT population.branch_code, COUNT(*)::int AS client_count,
+           COUNT(*) FILTER (WHERE population.effective_status='Active')::int AS active_count
+      FROM period_population population
+     GROUP BY population.branch_code
   ),
   period_client_totals AS (
     SELECT population.branch_code, COUNT(*)::int AS client_count
@@ -147,10 +159,9 @@ const periodAnalyticsSql = `
       LEFT JOIN cancellation_totals xt USING (branch_code)
   ),
   status_data AS (
-    SELECT c.status, COUNT(*)::int AS count
-      FROM clients c
-      JOIN branch_scope b USING (branch_code)
-     GROUP BY c.status
+    SELECT population.effective_status AS status, COUNT(*)::int AS count
+      FROM period_population population
+     GROUP BY population.effective_status
   )
   SELECT
     COALESCE((SELECT json_agg(json_build_object(
