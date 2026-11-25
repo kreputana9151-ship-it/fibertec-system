@@ -97,6 +97,19 @@ function getAllActiveClients() {
   return typeof clients !== "undefined" ? clients : [];
 }
 
+function findClientDuplicate(contactNo, email, excludeAccountNo) {
+  var clientsToCheck = getAllActiveClients();
+  var normalizedContact = String(contactNo || "").trim();
+  var normalizedEmail = String(email || "").trim().toLowerCase();
+  for (var i = 0; i < clientsToCheck.length; i++) {
+    var client = clientsToCheck[i];
+    if (String(client.no || client.account_no || "") === String(excludeAccountNo || "")) continue;
+    if (String(client.contact || client.contact_no || "").trim() === normalizedContact) return "Contact number is already registered to another client.";
+    if (String(client.email || "").trim().toLowerCase() === normalizedEmail) return "Email address is already registered to another client.";
+  }
+  return "";
+}
+
 async function syncStaffClients(silent) {
   if (isAdmin()) return;
   try {
@@ -459,7 +472,7 @@ async function saveClientEdit(no) {
   var name = $("e-name").value.trim();
   var address = $("e-address").value.trim();
   var contactNo = $("e-contact").value.trim();
-  var email = $("e-email").value.toLowerCase();
+  var email = $("e-email").value.trim().toLowerCase();
   var installedDate = $("e-installed").value;
   var facebook = $("e-facebook").value.trim();
   var routerLocation = $("e-device").value.trim();
@@ -485,6 +498,11 @@ async function saveClientEdit(no) {
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     err.innerHTML = "Please enter a valid email address.";
+    return;
+  }
+  var duplicate = findClientDuplicate(contactNo, email, no);
+  if (duplicate) {
+    err.innerHTML = esc(duplicate);
     return;
   }
 
@@ -638,7 +656,7 @@ async function saveClient() {
   var errEl = $("r-err"), btn = $("r-submit");
   errEl.innerHTML = "";
 
-  var name = v("r-name"), addr = v("r-addr"), mobile = v("r-mobile"), email = $("r-email") ? $("r-email").value.toLowerCase() : "";
+  var name = v("r-name"), addr = v("r-addr"), mobile = v("r-mobile"), email = $("r-email") ? $("r-email").value.trim().toLowerCase() : "";
   var pass = $("r-pass") ? $("r-pass").value : "";
   var planName = v("r-plan"), device = v("r-device"), regDate = v("r-date");
 
@@ -664,6 +682,11 @@ async function saveClient() {
   }
   if (pass.length < 8 || pass.length > 72) {
     errEl.innerHTML = "Initial portal password must be between 8 and 72 characters.";
+    return;
+  }
+  var duplicate = findClientDuplicate(mobile, email);
+  if (duplicate) {
+    errEl.innerHTML = esc(duplicate);
     return;
   }
 

@@ -12,6 +12,7 @@ const {
 const { publicErrorMessage, publicErrorStatus } = require('../utils/publicError');
 const { installedDateError, manilaToday } = require('../utils/businessDate');
 const { pagination } = require('../utils/pagination');
+const { duplicateClientError, duplicateClientMessage } = require('../utils/clientDuplicate');
 
 router.use(requireAuth, requireRole('staff'));
 // every query below uses req.user.branchCode, so staff can never see another branch
@@ -132,7 +133,7 @@ router.post('/clients', wrap(async (req, res) => {
   const b = req.body || {};
   const name = String(b.name || '').trim();
   const contactNo = String(b.contactNo || b.contact_no || '').trim();
-  const email = typeof b.email === 'string' ? b.email.toLowerCase() : '';
+  const email = typeof b.email === 'string' ? b.email.trim().toLowerCase() : '';
   const password = typeof b.password === 'string' ? b.password : '';
   const address = String(b.address || '').trim();
   const planId = b.planId || b.plan_id;
@@ -166,10 +167,14 @@ router.post('/clients', wrap(async (req, res) => {
 
   try {
     const out = await tx(async c => {
-      const dup = await c.query('SELECT 1 FROM clients WHERE LOWER(email) = $1 LIMIT 1', [email]);
-      if (dup.rows.length) {
-        throw new Error('A client account with this email address already exists.');
-      }
+      const duplicates = (await c.query(
+        `SELECT
+           EXISTS (SELECT 1 FROM clients WHERE BTRIM(contact_no)=$1) AS contact_exists,
+           EXISTS (SELECT 1 FROM clients WHERE LOWER(BTRIM(email))=$2) AS email_exists`,
+        [contactNo, email]
+      )).rows[0];
+      if (duplicates.contact_exists) throw duplicateClientError('contact_no');
+      if (duplicates.email_exists) throw duplicateClientError('email');
 
       await c.query('SELECT pg_advisory_xact_lock($1)', [Number(req.user.branchCode)]);
       const seq = (await c.query('SELECT COALESCE(MAX(client_seq),0)+1 AS n FROM clients WHERE branch_code=$1', [req.user.branchCode])).rows[0].n;
@@ -249,6 +254,8 @@ router.post('/clients', wrap(async (req, res) => {
 
     deliverPendingEmails().catch(e => console.error('Welcome email delivery error:', e));
   } catch (e) {
+    const duplicateMessage = duplicateClientMessage(e);
+    if (duplicateMessage) return res.status(409).json({ error: duplicateMessage });
     console.error('POST /api/staff/clients failed:', e && (e.code || e.name) || 'Error');
     res.status(publicErrorStatus(e, 400)).json({ error: publicErrorMessage(e, 'Could not register client.') });
   }

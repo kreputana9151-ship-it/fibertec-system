@@ -214,6 +214,10 @@ CREATE TABLE activity_log (
 
 -- helpful indexes for the common lookups
 CREATE INDEX idx_clients_branch    ON clients(branch_code);
+CREATE UNIQUE INDEX uq_clients_contact_no_normalized
+  ON clients (BTRIM(contact_no));
+CREATE UNIQUE INDEX uq_clients_email_normalized
+  ON clients (LOWER(BTRIM(email)));
 CREATE INDEX idx_payments_account  ON payments(account_no, payment_date);
 CREATE INDEX idx_payments_status   ON payments(status);
 CREATE INDEX idx_payments_queue    ON payments(status, created_at, payment_id) WHERE status = 'Pending';   -- FIFO queue lookup

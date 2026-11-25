@@ -207,6 +207,7 @@ git push
 - Already ran the old `schema.sql`? Run `database/migrate_login_update.sql` once, then `npm run seed` is not needed again.
 - Existing databases also need `database/migrate_current_balance.sql` once to add and initialize the live client balance column.
 - Run `database/enforce_auth_payment_integrity.sql` once on existing databases to enable account lockouts, unique pending requests, GCash-reference protection, and sequential unique official receipts.
+- Run `database/enforce_unique_client_contact_email.sql` once on existing databases to enforce unique trimmed contact numbers and case-insensitive trimmed client emails. Resolve any duplicates it reports before rerunning.
 - Run `database/add_password_reset_requests.sql` once on existing databases to enable the Client Portal Admin-reset request queue.
 - `database/align_2024_2026_lightweight.sql` rebuilds installation dates and synthetic statement/payment history from 2024 through Manila today. It retains client/account identifiers and notice rows, but replaces all statement/payment rows; review and back up the intended database before running it.
 

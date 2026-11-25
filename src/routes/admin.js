@@ -10,6 +10,7 @@ const { ACCOUNT_SUMMARY_CTES } = require('../services/accountSummary');
 const { publicErrorMessage, publicErrorStatus } = require('../utils/publicError');
 const { installedDateError } = require('../utils/businessDate');
 const { pagination } = require('../utils/pagination');
+const { duplicateClientError, duplicateClientMessage } = require('../utils/clientDuplicate');
 
 router.use(requireAuth, requireRole('admin'));
 // Admin sees all branches; billing history is retained, while activity feeds use a six-month window.
@@ -481,7 +482,7 @@ router.patch('/clients/:accountNo', wrap(async (req, res) => {
   const b = req.body || {};
   const name = String(b.name || '').trim();
   const contactNo = String(b.contactNo || '').trim();
-  const email = typeof b.email === 'string' ? b.email.toLowerCase() : '';
+  const email = typeof b.email === 'string' ? b.email.trim().toLowerCase() : '';
   const address = String(b.address || '').trim();
   const planId = Number(b.planId);
   const facebook = String(b.facebook || '').trim() || null;
@@ -514,11 +515,20 @@ router.patch('/clients/:accountNo', wrap(async (req, res) => {
 
   try {
     await tx(async c => {
-      const dup = await c.query(
-        'SELECT 1 FROM clients WHERE LOWER(email)=$1 AND account_no<>$2 LIMIT 1',
-        [email, req.params.accountNo]
-      );
-      if (dup.rows.length) throw new Error('Another client account already uses this email address.');
+      const duplicates = (await c.query(
+        `SELECT
+           EXISTS (
+             SELECT 1 FROM clients
+              WHERE BTRIM(contact_no)=$1 AND account_no<>$3
+           ) AS contact_exists,
+           EXISTS (
+             SELECT 1 FROM clients
+              WHERE LOWER(BTRIM(email))=$2 AND account_no<>$3
+           ) AS email_exists`,
+        [contactNo, email, req.params.accountNo]
+      )).rows[0];
+      if (duplicates.contact_exists) throw duplicateClientError('contact_no');
+      if (duplicates.email_exists) throw duplicateClientError('email');
       const plan = await c.query('SELECT 1 FROM plans WHERE plan_id=$1', [planId]);
       if (!plan.rows.length) throw new Error('Selected internet plan was not found.');
       if (installedDate !== null) {
@@ -555,6 +565,8 @@ router.patch('/clients/:accountNo', wrap(async (req, res) => {
     });
     res.json({ ok: true });
   } catch (e) {
+    const duplicateMessage = duplicateClientMessage(e);
+    if (duplicateMessage) return res.status(409).json({ error: duplicateMessage });
     res.status(publicErrorStatus(e, 400)).json({ error: publicErrorMessage(e, 'Could not update client details.') });
   }
 }));
