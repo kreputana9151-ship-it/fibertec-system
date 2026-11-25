@@ -25,27 +25,13 @@ function planIdForName(planName) {
   return 1;
 }
 
-function getLiveBillingSummary(accountNo, fallbackRate) {
-  var stmts = (typeof LIVE !== "undefined" && Array.isArray(LIVE.statements))
-    ? LIVE.statements.filter(function (s) { return s.acc === accountNo; })
-    : [];
-  var pays = (typeof LIVE !== "undefined" && Array.isArray(LIVE.payments))
-    ? LIVE.payments.filter(function (p) { return p.acc === accountNo; })
-    : [];
-
-  if (!stmts.length) return null;
-
-  stmts.sort(function (a, b) {
-    return (b.month || b.due || "").localeCompare(a.month || a.due || "");
-  });
-  var latest = stmts[0];
-  var totalVerifiedPays = 0, hasPending = false;
-  pays.forEach(function (p) {
-    if (String(p.statement_id) != String(latest.id)) return;
-    if (p.status === "Verified") totalVerifiedPays += Number(p.amount || 0);
-    if (p.status === "Pending") hasPending = true;
-  });
-
+function getLiveBillingSummary(accountNo) {
+  if (typeof LIVE === "undefined" || !LIVE.latestStatementByAccount) return null;
+  var latest = LIVE.latestStatementByAccount[accountNo];
+  if (!latest) return null;
+  var statementId = String(latest.id);
+  var totalVerifiedPays = Number(LIVE.verifiedPaidByStatement[statementId] || 0);
+  var hasPending = !!LIVE.pendingByStatement[statementId];
   var effectivePaid = Math.max(Number(latest.paid || 0), totalVerifiedPays);
   var balance = Math.max(0, Number(latest.amount || 0) - effectivePaid);
   var payStatus = balance <= 0 ? "Paid" : hasPending ? "Pending" : effectivePaid > 0 ? "Partially paid" : "Unpaid";
@@ -62,7 +48,7 @@ function getLiveBillingSummary(accountNo, fallbackRate) {
 function getAllActiveClients() {
   if (isAdmin() && typeof LIVE !== "undefined" && LIVE.loaded && Array.isArray(LIVE.clients)) {
     return LIVE.clients.map(function (c) {
-      var liveBill = getLiveBillingSummary(c.no, c.rate);
+      var liveBill = getLiveBillingSummary(c.no);
 
       var graceEnd = c.grace_end_date || "";
       var graceLeft = 0;
@@ -70,7 +56,9 @@ function getAllActiveClients() {
         var diffMs = new Date(String(graceEnd).slice(0, 10) + "T23:59:59+08:00") - new Date();
         graceLeft = Math.max(0, Math.ceil(diffMs / 86400000));
       }
-      var balance = liveBill ? liveBill.balance : Number(c.outstanding_balance || c.current_balance || 0);
+      var balance = Number(c.total_balance != null
+        ? c.total_balance
+        : c.outstanding_balance != null ? c.outstanding_balance : c.current_balance || 0);
 
       return {
         no: c.no,
@@ -83,9 +71,7 @@ function getAllActiveClients() {
         status: c.status,
         due: Number(c.due_day || 0),
         dueISO: liveBill ? liveBill.dueISO : (c.current_due_date || ""),
-        pay: c.status == "Terminated"
-          ? (balance > 0 ? "Unpaid" : (liveBill ? "Paid" : (c.payment_status || "—")))
-          : (liveBill ? liveBill.pay : (c.payment_status || "—")),
+        pay: c.payment_status || (balance > 0 ? "Unpaid" : (liveBill ? liveBill.pay : "—")),
         balance: balance,
         graceEnd: graceEnd,
         graceLeft: graceLeft,
@@ -114,7 +100,7 @@ function getAllActiveClients() {
 async function syncStaffClients(silent) {
   if (isAdmin()) return;
   try {
-    var rows = await apiCall("GET", "/api/staff/clients");
+    var rows = await apiCallAllPages("/api/staff/clients");
     LIVE_STAFF_CLIENTS = rows.map(function (r) {
       var graceEnd = r.grace_end_date || "";
       var graceLeft = 0;
@@ -382,7 +368,7 @@ function findClientRecord(no) {
 function viewClient(no) {
   var c = findClientRecord(no);
   if (!c) { toast("Client record not found.", "error"); return; }
-  var liveBill = getLiveBillingSummary(no, c.rate);
+  var liveBill = getLiveBillingSummary(no);
   var deviceLocation = String(c.device || "").trim() || "Standard indoor ONT placement";
   var s = liveBill && liveBill.latest
     ? { inv: liveBill.latest.inv || "—", bill: liveBill.latest.bill || c.installed || "", due: liveBill.latest.due || "", paid: liveBill.latest.paid || 0, amount: liveBill.latest.amount || c.rate || 0 }

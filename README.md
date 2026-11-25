@@ -180,7 +180,7 @@ Lahat JSON, may `Authorization: Bearer <token>` (maliban sa login).
 
 ## Business rules implemented
 - Account no. = branch code + YY + 4-digit client ID (e.g. 04260042), ito rin ang client login
-- Initial statements are issued on the registration/billing start date; later statements are issued on the previous due date and are due one clamped calendar month later. Amount = plan rate + previous balance. Run `database/fix_statement_issued_dates.sql` when upgrading an existing database.
+- Each monthly statement is charged at the assigned plan's exact monthly rate; arrears stay separate and are never added to a new cycle. Statements are created once per account and billing month, only within the seven-day due window. Run `database/fix_statement_issued_dates.sql` when upgrading an existing database.
 - Day after due date -> Grace Period (5 days) + Disconnection Warning -> Under Review -> auto Terminated after 3 days
 - Partial payment only on/before due date; after that, full balance
 - Client history 3 months (views), admin 6 months, older rows deleted daily by `purge_old_records()`
@@ -208,6 +208,7 @@ git push
 - Existing databases also need `database/migrate_current_balance.sql` once to add and initialize the live client balance column.
 - Run `database/enforce_auth_payment_integrity.sql` once on existing databases to enable account lockouts, unique pending requests, GCash-reference protection, and sequential unique official receipts.
 - Run `database/add_password_reset_requests.sql` once on existing databases to enable the Client Portal Admin-reset request queue.
+- `database/align_2024_2026_lightweight.sql` rebuilds installation dates and synthetic statement/payment history from 2024 through Manila today. It retains client/account identifiers and notice rows, but replaces all statement/payment rows; review and back up the intended database before running it.
 
 ## Custom address (instead of localhost:3000)
 1. Add this line to your hosts file, then save (Windows: open Notepad as Administrator, file `C:\Windows\System32\drivers\etc\hosts`; Mac/Linux: `sudo nano /etc/hosts`):

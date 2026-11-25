@@ -3,7 +3,11 @@ const bcrypt = require('bcrypt');
 const { requireAuth, requireRole, requirePasswordChangeComplete } = require('../middleware/auth');
 const { query } = require('../db');
 const { buildStatementPdf, loadStatement } = require('../services/statementPdf');
-const { ACCOUNT_SUMMARY_CTES } = require('../services/accountSummary');
+const {
+  ACCOUNT_SUMMARY_CTES_BY_ACCOUNT,
+  buildAccountSummaryCtes
+} = require('../services/accountSummary');
+const { pagination } = require('../utils/pagination');
 
 router.use(requireAuth, requireRole('client'), requirePasswordChangeComplete);
 const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
@@ -11,7 +15,7 @@ const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
 // GET /api/client/me  -> account overview (dates are sent as plain YYYY-MM-DD text, no time-zone shifting)
 router.get('/me', wrap(async (req, res) => {
   const { rows } = await query(
-    `WITH ${ACCOUNT_SUMMARY_CTES}
+    `WITH ${ACCOUNT_SUMMARY_CTES_BY_ACCOUNT}
      SELECT c.account_no, c.name, c.email, c.contact_no, c.address,
             summary.effective_status AS status,
             summary.total_balance AS current_balance,
@@ -32,10 +36,11 @@ router.get('/me', wrap(async (req, res) => {
   res.json(rows[0]);
 }));
 
-// Statement and payment views retain the full account history.
+// Statement and payment history is served in bounded pages.
 router.get('/statements', wrap(async (req, res) => {
+  const page = pagination(req);
   const { rows } = await query(
-    `WITH ${ACCOUNT_SUMMARY_CTES}
+    `WITH ${ACCOUNT_SUMMARY_CTES_BY_ACCOUNT}
      SELECT s.statement_id, s.invoice_no, s.billing_month::text, s.issued_date::text, s.due_date::text, s.amount,
             s.payment_status AS stored_payment_status,
             COALESCE(statement_paid.verified_paid, 0) AS amount_paid,
@@ -47,7 +52,8 @@ router.get('/statements', wrap(async (req, res) => {
        FROM v_client_statements s
        JOIN account_summary summary USING (account_no)
        LEFT JOIN summary_payment_totals statement_paid ON statement_paid.statement_id=s.statement_id
-      WHERE s.account_no=$1 ORDER BY s.billing_month DESC`, [req.user.accountNo]);
+      WHERE s.account_no=$1 ORDER BY s.billing_month DESC LIMIT $2 OFFSET $3`,
+    [req.user.accountNo, page.limit, page.offset]);
   res.json(rows);
 }));
 router.get('/statement-months', wrap(async (req, res) => {
@@ -73,18 +79,22 @@ router.get('/statement-months', wrap(async (req, res) => {
   res.json(rows.map(row => row.month));
 }));
 router.get('/payments', wrap(async (req, res) => {
+  const page = pagination(req);
   const { rows } = await query(
     `SELECT payment_id, statement_id, amount, method, payment_type, reference_no, or_no, status, payment_date::text, created_at
-       FROM v_client_payments WHERE account_no=$1 ORDER BY created_at DESC`, [req.user.accountNo]);
+       FROM v_client_payments WHERE account_no=$1 ORDER BY created_at DESC, payment_id DESC LIMIT $2 OFFSET $3`,
+    [req.user.accountNo, page.limit, page.offset]);
   res.json(rows);
 }));
 router.get('/notices', wrap(async (req, res) => {          // bell notifications (portal channel), newest first, last 3 months
+  const page = pagination(req);
   const { rows } = await query(
     `SELECT n.notice_id, n.notice_type, n.message, n.created_at, (n.read_at IS NOT NULL) AS is_read,
             s.invoice_no, s.amount, s.due_date::text AS due_date
        FROM notices n LEFT JOIN statements s ON s.statement_id = n.statement_id
       WHERE n.account_no=$1 AND n.channel='Portal Notification' AND n.notice_date >= (date_trunc('month', current_date) - interval '3 months')::date
-      ORDER BY n.created_at DESC, n.notice_id DESC`, [req.user.accountNo]);
+      ORDER BY n.created_at DESC, n.notice_id DESC LIMIT $2 OFFSET $3`,
+    [req.user.accountNo, page.limit, page.offset]);
   res.json(rows);
 }));
 router.post('/notices/read-all', wrap(async (req, res) => {
@@ -127,7 +137,7 @@ router.post('/payments', wrap(async (req, res) => {
   }
 
   const s = (await query(
-    `WITH ${ACCOUNT_SUMMARY_CTES}
+    `WITH ${buildAccountSummaryCtes('account', 2)}
      SELECT s.*, summary.effective_status AS client_status,
             summary.previous_balance, summary.current_month_due, summary.total_balance,
             COALESCE(paid.verified_paid, 0) AS verified_paid,

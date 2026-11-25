@@ -64,6 +64,20 @@ function apiCall(method, path, body) {                                  // authe
     });
   });
 }
+function apiCallAllPages(path, pageSize) {
+  var size = pageSize || 500, offset = 0, all = [];
+  function loadPage() {
+    var separator = path.indexOf("?") >= 0 ? "&" : "?";
+    return apiCall("GET", path + separator + "limit=" + size + "&offset=" + offset).then(function (rows) {
+      if (!Array.isArray(rows)) throw new Error("The paginated API response was not a list.");
+      all = all.concat(rows);
+      if (rows.length < size) return all;
+      offset += rows.length;
+      return loadPage();
+    });
+  }
+  return loadPage();
+}
 var LOGIN_RESULT = null, LOGIN_PW = "";
 function goPortal(d) {
   sessionStorage.setItem("fiberToken", d.token); sessionStorage.setItem("fiberRole", d.role);

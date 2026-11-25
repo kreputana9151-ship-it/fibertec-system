@@ -9,6 +9,7 @@ const { sendEmail } = require('../services/mailer');
 const { ACCOUNT_SUMMARY_CTES } = require('../services/accountSummary');
 const { publicErrorMessage, publicErrorStatus } = require('../utils/publicError');
 const { installedDateError } = require('../utils/businessDate');
+const { pagination } = require('../utils/pagination');
 
 router.use(requireAuth, requireRole('admin'));
 // Admin sees all branches; billing history is retained, while activity feeds use a six-month window.
@@ -235,12 +236,15 @@ router.get('/dashboard', async (req, res) => {
 // GET /api/admin/password-reset-requests
 router.get('/password-reset-requests', async (req, res) => {
   try {
+    const page = pagination(req);
     const { rows } = await query(
       `SELECT id, account_no, client_name, status,
               TO_CHAR(requested_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD HH24:MI:SS') AS requested_at_manila
          FROM password_reset_requests
         WHERE status='Pending'
-        ORDER BY requested_at, id`
+        ORDER BY requested_at, id
+        LIMIT $1 OFFSET $2`,
+      [page.limit, page.offset]
     );
     res.json(rows);
   } catch (e) {
@@ -283,6 +287,7 @@ router.post('/password-reset-requests/:id/reset', async (req, res) => {
 // GET /api/admin/cancellations?branch=04
 router.get('/cancellations', async (req, res) => {
   try {
+    const page = pagination(req);
     const { rows } = await query(
       `SELECT r.request_id, r.account_no, r.request_date, r.reason, r.status,
               c.name, b.name AS branch
@@ -297,8 +302,9 @@ router.get('/cancellations', async (req, res) => {
                 AND h.new_status='Active'
                 AND h.changed_at > r.created_at
            )
-        ORDER BY r.created_at DESC, r.request_id DESC`,
-      [req.query.branch || null]
+        ORDER BY r.created_at DESC, r.request_id DESC
+        LIMIT $2 OFFSET $3`,
+      [req.query.branch || null, page.limit, page.offset]
     );
     res.json(rows);
   } catch (e) {
@@ -310,6 +316,7 @@ router.get('/cancellations', async (req, res) => {
 // GET /api/admin/clients?branch=04&status=Active
 router.get('/clients', async (req, res) => {
   try {
+    const page = pagination(req);
     const { rows } = await query(
       `WITH ${ACCOUNT_SUMMARY_CTES}
        SELECT c.account_no,
@@ -359,8 +366,9 @@ router.get('/clients', async (req, res) => {
          JOIN account_summary summary USING (account_no)
         WHERE ($1::text IS NULL OR c.branch_code=$1)
           AND ($2::text IS NULL OR summary.effective_status=$2)
-        ORDER BY c.branch_code, c.client_seq`,
-      [req.query.branch || null, req.query.status || null]
+        ORDER BY c.branch_code, c.client_seq
+        LIMIT $3 OFFSET $4`,
+      [req.query.branch || null, req.query.status || null, page.limit, page.offset]
     );
     res.json(rows);
   } catch (e) {
@@ -373,6 +381,7 @@ router.get('/clients', async (req, res) => {
 router.get('/statements', async (req, res) => {
   const month = selectedMonth(req.query.month);
   if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
+  const page = pagination(req);
   const { rows } = await query(
     `WITH ${ACCOUNT_SUMMARY_CTES}
      SELECT s.statement_id, s.invoice_no, s.account_no, s.billing_month, s.issued_date, s.due_date, s.amount,
@@ -389,7 +398,8 @@ router.get('/statements', async (req, res) => {
        LEFT JOIN summary_payment_totals statement_paid ON statement_paid.statement_id=s.statement_id
       WHERE ($1::text IS NULL OR TO_CHAR(s.billing_month, 'YYYY-MM')=$1)
         AND ($2::text IS NULL OR c.branch_code=$2)
-      ORDER BY s.billing_month DESC, s.account_no`, [month, req.query.branch || null]);
+      ORDER BY s.billing_month DESC, s.account_no
+      LIMIT $3 OFFSET $4`, [month, req.query.branch || null, page.limit, page.offset]);
   res.json(rows);
 });
 
@@ -397,6 +407,7 @@ router.get('/statements', async (req, res) => {
 router.get('/payments', async (req, res) => {
   const month = selectedMonth(req.query.month);
   if (month === false) return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
+  const page = pagination(req);
   const { rows } = await query(
     `WITH ${ACCOUNT_SUMMARY_CTES}
      SELECT p.*, c.name, c.branch_code, b.name AS branch,
@@ -409,8 +420,9 @@ router.get('/payments', async (req, res) => {
       WHERE ($1::text IS NULL OR TO_CHAR(COALESCE(p.payment_date, p.created_at::date), 'YYYY-MM') = $1)
         AND ($2::text IS NULL OR c.branch_code = $2)
         AND ($3::text IS NULL OR p.status = $3)
-      ORDER BY COALESCE(p.payment_date, p.created_at::date) DESC, p.payment_id DESC`,
-    [month, req.query.branch || null, req.query.status || null]
+      ORDER BY COALESCE(p.payment_date, p.created_at::date) DESC, p.payment_id DESC
+      LIMIT $4 OFFSET $5`,
+    [month, req.query.branch || null, req.query.status || null, page.limit, page.offset]
   );
   res.json(rows);
 });
@@ -434,10 +446,12 @@ router.post('/statements/:id/send', async (req, res) => {
 
 // GET /api/admin/notices?status=Failed
 router.get('/notices', async (req, res) => {
+  const page = pagination(req);
   const { rows } = await query(
     `SELECT n.*, c.name FROM notices n JOIN clients c USING (account_no)
       WHERE n.notice_date >= (${SIX}) AND ($1::text IS NULL OR n.delivery_status=$1)
-      ORDER BY n.created_at DESC LIMIT 500`, [req.query.status || null]);
+      ORDER BY n.created_at DESC, n.notice_id DESC LIMIT $2 OFFSET $3`,
+    [req.query.status || null, page.limit, page.offset]);
   res.json(rows);
 });
 
@@ -593,10 +607,12 @@ router.get('/analytics', async (req, res) => {
 
 // GET /api/admin/activity?branch=04  (6 months)
 router.get('/activity', async (req, res) => {
+  const page = pagination(req, 500);
   const { rows } = await query(
     `SELECT a.*, u.login_id FROM activity_log a JOIN users u USING (user_id)
       WHERE a.logged_at >= (${SIX}) AND ($1::text IS NULL OR a.branch_code=$1)
-      ORDER BY a.logged_at DESC LIMIT 500`, [req.query.branch || null]);
+      ORDER BY a.logged_at DESC, a.log_id DESC LIMIT $2 OFFSET $3`,
+    [req.query.branch || null, page.limit, page.offset]);
   res.json(rows);
 });
 

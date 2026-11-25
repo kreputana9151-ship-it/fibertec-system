@@ -3,9 +3,7 @@ var ME = null, STM = [], STMT_MONTHS = [], STMT_FILTER = "", PAYS = [], NOTES = 
 function todayISO() { return manilaISO(); }
 function inBillingNow() { return ME.status == "Active" || ME.status == "Grace Period"; }
 function verifiedPaid(s) {
-  var fromPayments = PAYS.filter(function (p) { return String(p.statement_id) == String(s.id) && p.status == "Verified"; })
-    .reduce(function (sum, p) { return sum + Number(p.amount || 0); }, 0);
-  return Math.max(Number(s.paid || 0), fromPayments);
+  return Number(s.paid || 0);
 }
 function remainingBalance(s) { return Math.max(0, Number(s.amount || 0) - verifiedPaid(s)); }
 function cur() {
@@ -56,7 +54,7 @@ function renderClient() {
   $("c-banner").innerHTML = st.banner; $("c-name").innerHTML = esc(ME.name.toUpperCase()); $("c-av").innerHTML = initials(ME.name); $("c-welcome").innerHTML = "WELCOME " + esc(ME.name.toUpperCase());
   var mbps = (ME.plan.match(/\d+(?=\s*Mbps)/) || ["0"])[0], pn = ME.plan.replace(/\s*\d+\s*Mbps/, "").trim();
   $("c-cards").innerHTML = "<div class='c-card'><p class='c-lab'>SUBSCRIPTION</p><p class='c-big'>" + mbps + " Mbps</p><p class='c-sub'><b>" + esc(pn) + " " + mbps + "</b> &middot; <b>" + peso(ME.rate) + "/month</b></p></div>" +
-    "<div class='c-card'><p class='c-lab'>CURRENT BALANCE</p><p class='c-big'>" + peso(s.balance) + "</p>" + pill(label) + "</div>" +
+    "<div class='c-card'><p class='c-lab'>CURRENT BALANCE</p><p class='c-big'>" + peso(ME.totalBalance) + "</p>" + pill(label) + "</div>" +
     "<div class='c-card'><p class='c-lab'>DUE DATE</p><p class='c-big' style='font-size:32px;margin-top:16px'>" + fmtD(s.due) + "</p><p class='c-sub'>balance " + peso(s.balance) + "</p></div>" +
     "<div class='c-card'><p class='c-lab'>DAYS LEFT IN CYCLE</p><p class='c-big'>" + dayDiff(nextDue, todayISO()) + "</p><p class='c-sub'>Next statement " + fmtD(nextDue) + ". Billing follows your anniversary date</p></div>";
   $("c-acct").innerHTML = "<h3>Your Account</h3><div class='c-kv'><b>Account no.</b><span>" + ME.no + "</span></div><div class='c-kv'><b>Address</b><span>" + esc(ME.address) + "</span></div><div class='c-kv'><b>Branch</b><span>" + esc(ME.branch) + "</span></div><div class='c-kv'><b>Installed</b><span>" + fmtD(ME.installed) + "</span></div><div class='c-kv'><b>Device location</b><span>" + esc(ME.device) + "</span></div><div class='c-kv'><b>Email</b><span>" + esc(ME.email) + "</span></div>" +
@@ -230,8 +228,14 @@ function markAllRead() {
 
 /* ---------- load everything from the database ---------- */
 function loadAll() {
-  return Promise.all([apiCall("GET", "/api/client/me"), apiCall("GET", "/api/client/statements"), apiCall("GET", "/api/client/payments"), apiCall("GET", "/api/client/notices"), apiCall("GET", "/api/client/statement-months")]).then(function (r) {
-    var d = r[0]; ME = { no: d.account_no, name: d.name, email: d.email, address: d.address, branch: d.branch, plan: d.plan_name, rate: Number(d.monthly_rate), status: d.status, reason: d.status_reason, graceEnd: d.grace_end_date, installed: d.installed_date || d.registered_date, device: d.router_location || "-", due: Number(d.due_day), hasPending: d.has_pending, cancel: d.cancel };
+  return Promise.all([
+    apiCall("GET", "/api/client/me"),
+    apiCallAllPages("/api/client/statements"),
+    apiCallAllPages("/api/client/payments"),
+    apiCallAllPages("/api/client/notices"),
+    apiCall("GET", "/api/client/statement-months")
+  ]).then(function (r) {
+    var d = r[0]; ME = { no: d.account_no, name: d.name, email: d.email, address: d.address, branch: d.branch, plan: d.plan_name, rate: Number(d.monthly_rate), totalBalance: Number(d.total_balance || 0), previousBalance: Number(d.previous_balance || 0), currentMonthDue: Number(d.current_month_due || 0), status: d.status, reason: d.status_reason, graceEnd: d.grace_end_date, installed: d.installed_date || d.registered_date, device: d.router_location || "-", due: Number(d.due_day), hasPending: d.has_pending, cancel: d.cancel };
     STM = r[1].map(mapStmt); PAYS = r[2]; NOTES = r[3]; STMT_MONTHS = r[4];
     populateStatementMonths();
   });

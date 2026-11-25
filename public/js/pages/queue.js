@@ -44,7 +44,7 @@ function metricsHTML() {
   var m = PAY.metrics || {};
   function tile(k, v, id, note) { return "<div class='fifo-m'><span>" + k + "</span><b" + (id ? " id='" + id + "'" : "") + ">" + v + "</b><small>" + note + "</small></div>"; }
   var mu = m.mu_per_hour, rho = m.rho;
-  return tile("Queue length (L<sub>q</sub>)", PAY.queue.length, "", "pending in buffer") +
+  return tile("Queue length (L<sub>q</sub>)", Number(m.queue_length || 0), "", "pending in buffer") +
     tile("Arrival rate (&lambda;)", Number(m.lambda_per_hour || 0).toFixed(0) + "/hr", "", "submissions in the last hour") +
     tile("Service rate (&mu;)", mu ? Number(mu).toFixed(1) + "/hr" : "&mdash;", "", mu ? "avg " + fmtDur(3600000 / mu) + " per payment" : "needs a verification in the last 24 h") +
     tile("Utilization (&rho; = &lambda;/&mu;)", rho != null ? Number(rho).toFixed(2) : "&mdash;", "", rho != null && rho >= 1 ? "queue keeps growing" : "stable if below 1") +
@@ -52,30 +52,31 @@ function metricsHTML() {
 }
 function renderQueue() {
   var q = PAY.queue, box = $("queue"); if (!box) return;
-  $("pcount").innerHTML = q.length;
+  $("pcount").innerHTML = Number((PAY.metrics || {}).queue_length || q.length);
   $("q-updated").textContent = PAY.at ? "Updated " + new Date(PAY.at).toLocaleTimeString("en-PH", { timeZone: "Asia/Manila" }) : "";
   $("fifo-metrics").innerHTML = PAY.loaded ? metricsHTML() : "";
   if (!PAY.loaded && !PAY.error) box.innerHTML = "<p class='empty'>Loading the queue...</p>";
   else if (PAY.error && !PAY.loaded) box.innerHTML = "<p class='empty'>" + esc(PAY.error) + " <a style='color:#2b86ff;cursor:pointer' onclick='refreshPayments()'>Try again</a></p>";
   else if (!q.length) box.innerHTML = "<p class='empty'>No pending payments in the verification queue.</p>";
-  else box.innerHTML = headCard(q[0]) + (q.length > 1 ? "<p class='fifo-sub'>Waiting in queue (" + (q.length - 1) + ") &mdash; oldest first</p><div class='q-scroll'>" + q.slice(1).map(waitRow).join("") + "</div>" : "");
+  else box.innerHTML = headCard(q[0]) + (Number((PAY.metrics || {}).queue_length || q.length) > 1 ? "<p class='fifo-sub'>Waiting in queue (" + (Number((PAY.metrics || {}).queue_length || q.length) - 1) + ") &mdash; oldest first</p><div class='q-scroll'>" + q.slice(1).map(waitRow).join("") + "</div>" : "");
   tickQueue();
 }
 function tickQueue() {
   var n = Date.now(), q = PAY.queue;
   document.querySelectorAll("[data-ts]").forEach(function (e) { e.textContent = fmtDur(n - Number(e.getAttribute("data-ts"))); });
   var wq = $("m-wq"), lg = $("m-long");
-  if (wq) wq.textContent = q.length ? fmtDur(q.reduce(function (a, p) { return a + n - subMs(p); }, 0) / q.length) : "0m 0s";
-  if (lg) lg.textContent = q.length ? fmtDur(n - subMs(q[0])) : "0m 0s";
+  var metrics = PAY.metrics || {};
+  if (wq) wq.textContent = Number(metrics.queue_length || 0) ? fmtDur(Number(metrics.avg_wait_seconds || 0) * 1000) : "0m 0s";
+  if (lg) lg.textContent = Number(metrics.queue_length || 0) ? fmtDur(Number(metrics.longest_wait_seconds || 0) * 1000) : "0m 0s";
 }
 /* load queue + metrics, payment records and activity from the API, then redraw */
 function refreshPayments() {
   return Promise.all([
     apiCall("GET", "/api/staff/payments/queue").then(function (d) { PAY.queue = d.queue; PAY.metrics = d.metrics; }),
-    apiCall("GET", "/api/staff/payments").then(function (d) { PAY.records = d.filter(function (r) { return r.status != "Pending"; }); }),
-    apiCall("GET", "/api/staff/activity").then(function (d) { PAY.activity = d; }),
+    apiCallAllPages("/api/staff/payments").then(function (d) { PAY.records = d.filter(function (r) { return r.status != "Pending"; }); }),
+    apiCallAllPages("/api/staff/activity").then(function (d) { PAY.activity = d; }),
     apiCall("GET", "/api/staff/dashboard").then(function (d) { PAY.statusCounts = d; }),
-    apiCall("GET", "/api/staff/cancellations").then(function (rows) {
+    apiCallAllPages("/api/staff/cancellations").then(function (rows) {
       STAFF_REQUESTS = rows.filter(function (r) { return r.status === "Pending"; }).map(function (r) {
         return { id: r.request_id, acc: r.account_no, name: r.name, date: r.request_date, reason: r.reason, status: r.status };
       });

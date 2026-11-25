@@ -1,7 +1,20 @@
-function buildAccountSummaryCtes(accountScoped) {
-  const paymentFilter = accountScoped ? 'AND p.account_no=$1' : '';
-  const statementFilter = accountScoped ? 'AND s.account_no=$1' : '';
-  const clientFilter = accountScoped ? 'WHERE c.account_no=$1' : '';
+function buildAccountSummaryCtes(scope, paramIndex = 1) {
+  const scopeParam = `$${paramIndex}`;
+  const paymentFilter = scope === 'account'
+    ? `AND p.account_no=${scopeParam}`
+    : scope === 'branch'
+      ? `AND p.account_no IN (SELECT account_no FROM clients WHERE branch_code=${scopeParam})`
+      : '';
+  const statementFilter = scope === 'account'
+    ? `AND s.account_no=${scopeParam}`
+    : scope === 'branch'
+      ? `AND s.account_no IN (SELECT account_no FROM clients WHERE branch_code=${scopeParam})`
+      : '';
+  const clientFilter = scope === 'account'
+    ? `WHERE c.account_no=${scopeParam}`
+    : scope === 'branch'
+      ? `WHERE c.branch_code=${scopeParam}`
+      : '';
   return `
 billing_clock AS (
   SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date AS today,
@@ -100,15 +113,23 @@ account_summary AS (
 `;
 }
 
-const ACCOUNT_SUMMARY_CTES = buildAccountSummaryCtes(false);
+const ACCOUNT_SUMMARY_CTES = buildAccountSummaryCtes();
+const ACCOUNT_SUMMARY_CTES_BY_ACCOUNT = buildAccountSummaryCtes('account');
+const ACCOUNT_SUMMARY_CTES_BY_BRANCH = buildAccountSummaryCtes('branch');
 
 async function loadAccountSummary(db, accountNo) {
   const { rows } = await db.query(
-    `WITH ${buildAccountSummaryCtes(true)}
+    `WITH ${ACCOUNT_SUMMARY_CTES_BY_ACCOUNT}
      SELECT * FROM account_summary WHERE account_no=$1`,
     [accountNo]
   );
   return rows[0] || null;
 }
 
-module.exports = { ACCOUNT_SUMMARY_CTES, loadAccountSummary };
+module.exports = {
+  ACCOUNT_SUMMARY_CTES,
+  ACCOUNT_SUMMARY_CTES_BY_ACCOUNT,
+  ACCOUNT_SUMMARY_CTES_BY_BRANCH,
+  buildAccountSummaryCtes,
+  loadAccountSummary
+};

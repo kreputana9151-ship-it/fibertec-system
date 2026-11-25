@@ -5,9 +5,13 @@ const { query, tx } = require('../db');
 const { applyVerifiedPayment, createInitialStatement } = require('../services/billing');
 const { changeStatus, logActivity, addNotice } = require('../services/audit');
 const { deliverPendingEmails } = require('../services/notify');
-const { ACCOUNT_SUMMARY_CTES } = require('../services/accountSummary');
+const {
+  ACCOUNT_SUMMARY_CTES_BY_BRANCH,
+  buildAccountSummaryCtes
+} = require('../services/accountSummary');
 const { publicErrorMessage, publicErrorStatus } = require('../utils/publicError');
 const { installedDateError, manilaToday } = require('../utils/businessDate');
+const { pagination } = require('../utils/pagination');
 
 router.use(requireAuth, requireRole('staff'));
 // every query below uses req.user.branchCode, so staff can never see another branch
@@ -16,8 +20,9 @@ router.use(requireAuth, requireRole('staff'));
 router.get('/clients', async (req, res) => {
   try {
     const q = `%${req.query.q || ''}%`;
+    const page = pagination(req);
     const { rows } = await query(
-      `WITH ${ACCOUNT_SUMMARY_CTES}
+      `WITH ${ACCOUNT_SUMMARY_CTES_BY_BRANCH}
        SELECT c.account_no, c.name, c.contact_no, c.email, c.address,
               summary.effective_status AS status,
               summary.total_balance AS current_balance,
@@ -50,8 +55,9 @@ router.get('/clients', async (req, res) => {
          FROM clients c JOIN plans p USING (plan_id)
          JOIN account_summary summary USING (account_no)
         WHERE c.branch_code=$1 AND (c.name ILIKE $2 OR c.account_no LIKE $2 OR c.email ILIKE $2)
-        ORDER BY c.client_seq`,
-      [req.user.branchCode, q]
+        ORDER BY c.client_seq
+        LIMIT $3 OFFSET $4`,
+      [req.user.branchCode, q, page.limit, page.offset]
     );
     res.json(rows);
   } catch (e) {
@@ -64,18 +70,29 @@ router.get('/clients', async (req, res) => {
 router.get('/dashboard', async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT COUNT(*) FILTER (WHERE c.status='Active')::int AS active,
-             COUNT(*) FILTER (WHERE c.status='Grace Period')::int AS grace_period,
-             COUNT(*) FILTER (WHERE c.status='Under Review')::int AS under_review,
-             COUNT(*) FILTER (WHERE c.status='Terminated')::int AS terminated,
+      `WITH ${ACCOUNT_SUMMARY_CTES_BY_BRANCH}
+       SELECT COUNT(*) FILTER (WHERE summary.effective_status='Active')::int AS active,
+             COUNT(*) FILTER (WHERE summary.effective_status='Grace Period')::int AS grace_period,
+             COUNT(*) FILTER (WHERE summary.effective_status='Under Review')::int AS under_review,
+             COUNT(*) FILTER (WHERE summary.effective_status='Terminated')::int AS terminated,
+             COUNT(*) FILTER (
+               WHERE summary.current_due_date=(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date
+                 AND summary.total_balance > 0
+                 AND summary.effective_status IN ('Active','Grace Period')
+             )::int AS due_today,
               COALESCE((
                 SELECT SUM(p.amount)
                  FROM payments p JOIN clients payment_client USING (account_no)
                 WHERE payment_client.branch_code=$1 AND p.status='Verified'
-                    AND TO_CHAR(COALESCE(p.verified_at AT TIME ZONE 'Asia/Manila', p.payment_date::timestamp), 'YYYY-MM') =
-                       TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila', 'YYYY-MM')
+                  AND p.payment_date >= date_trunc(
+                    'month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date
+                  )::date
+                  AND p.payment_date < (date_trunc(
+                    'month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')::date
+                  ) + INTERVAL '1 month')::date
               ), 0) AS collected_this_month
          FROM clients c
+         JOIN account_summary summary USING (account_no)
         WHERE c.branch_code=$1`,
       [req.user.branchCode]
     );
@@ -89,7 +106,7 @@ router.get('/dashboard', async (req, res) => {
 // GET /api/staff/clients.csv  (Export CSV)
 router.get('/clients.csv', async (req, res) => {
   const { rows } = await query(
-    `WITH ${ACCOUNT_SUMMARY_CTES}
+    `WITH ${ACCOUNT_SUMMARY_CTES_BY_BRANCH}
      SELECT c.account_no, c.name, c.contact_no, c.email, p.plan_name,
             summary.effective_status AS status, summary.total_balance
        FROM clients c
@@ -244,8 +261,9 @@ async function assertHead(c, branchCode, id) {
 // GET /api/staff/payments/queue
 router.get('/payments/queue', async (req, res) => {
   const bc = req.user.branchCode;
+  const page = pagination(req);
   const q = (await query(
-    `WITH ${ACCOUNT_SUMMARY_CTES}
+    `WITH ${ACCOUNT_SUMMARY_CTES_BY_BRANCH}
      SELECT ROW_NUMBER() OVER (${FIFO_ORDER}) AS queue_no, p.payment_id, p.account_no, c.name,
             summary.effective_status AS client_status,
             summary.previous_balance, summary.current_month_due, summary.total_balance,
@@ -258,34 +276,50 @@ router.get('/payments/queue', async (req, res) => {
        JOIN statements s ON s.statement_id=p.statement_id
        JOIN account_summary summary USING (account_no)
        LEFT JOIN summary_payment_totals paid ON paid.statement_id=s.statement_id
-      WHERE c.branch_code=$1 AND p.status='Pending' ${FIFO_ORDER}`, [bc])).rows;
+      WHERE c.branch_code=$1 AND p.status='Pending' ${FIFO_ORDER}
+      LIMIT $2 OFFSET $3`, [bc, page.limit, page.offset])).rows;
   const m = (await query(
-    `WITH done AS (SELECT p.created_at, p.verified_at, LAG(p.verified_at) OVER (ORDER BY p.verified_at) AS prev_done
-                     FROM payments p JOIN clients c USING (account_no)
-                    WHERE c.branch_code=$1 AND p.verified_at >= now() - interval '24 hours')
-     SELECT (SELECT COUNT(*) FROM payments p JOIN clients c USING (account_no)
-              WHERE c.branch_code=$1 AND p.method='GCash' AND p.created_at >= now() - interval '1 hour')::int AS arrivals_last_hour,
-            AVG(EXTRACT(EPOCH FROM (verified_at - GREATEST(created_at, COALESCE(prev_done, created_at))))) AS avg_service_seconds
-       FROM done`, [bc])).rows[0];
+    `WITH pending_metrics AS (
+       SELECT COUNT(*)::int AS queue_length,
+              COALESCE(AVG(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - p.created_at))), 0) AS avg_wait_seconds,
+              COALESCE(MAX(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - p.created_at))), 0) AS longest_wait_seconds
+         FROM payments p JOIN clients c USING (account_no)
+        WHERE c.branch_code=$1 AND p.status='Pending'
+     ), done AS (
+       SELECT p.created_at, p.verified_at,
+              LAG(p.verified_at) OVER (ORDER BY p.verified_at) AS prev_done
+         FROM payments p JOIN clients c USING (account_no)
+        WHERE c.branch_code=$1 AND p.verified_at >= now() - interval '24 hours'
+     )
+     SELECT pending_metrics.*,
+            (SELECT COUNT(*)::int FROM payments p JOIN clients c USING (account_no)
+              WHERE c.branch_code=$1 AND p.method='GCash' AND p.created_at >= now() - interval '1 hour') AS arrivals_last_hour,
+            (SELECT AVG(EXTRACT(EPOCH FROM (verified_at - GREATEST(created_at, COALESCE(prev_done, created_at)))))
+               FROM done) AS avg_service_seconds
+       FROM pending_metrics`, [bc])).rows[0];
   const lambda = Number(m.arrivals_last_hour), svc = m.avg_service_seconds === null ? null : Number(m.avg_service_seconds);
   const mu = svc ? 3600 / svc : null;
   res.json({
     queue: q,
     metrics: {
-      Lq: q.length,
+      queue_length: Number(m.queue_length),
+      avg_wait_seconds: Number(m.avg_wait_seconds),
+      longest_wait_seconds: Number(m.longest_wait_seconds),
+      Lq: Number(m.queue_length),
       lambda_per_hour: lambda,
       mu_per_hour: mu,
       rho: mu ? lambda / mu : null,
-      avg_wait_seconds: q.length ? q.reduce((a, r) => a + r.waiting_seconds, 0) / q.length : 0,
-      longest_wait_seconds: q.length ? q[0].waiting_seconds : 0
+      avg_wait_seconds: Number(m.avg_wait_seconds),
+      longest_wait_seconds: Number(m.longest_wait_seconds)
     }
   });
 });
 
 // GET /api/staff/statements/open?q=
 router.get('/statements/open', async (req, res) => {
+  const page = pagination(req, 20, 100);
   const { rows } = await query(
-    `WITH ${ACCOUNT_SUMMARY_CTES}
+    `WITH ${ACCOUNT_SUMMARY_CTES_BY_BRANCH}
      SELECT s.statement_id, s.account_no, c.name, summary.effective_status AS client_status,
             summary.previous_balance, summary.current_month_due, summary.total_balance,
             s.amount, s.payment_status AS stored_payment_status,
@@ -300,20 +334,23 @@ router.get('/statements/open', async (req, res) => {
        LEFT JOIN summary_payment_totals paid ON paid.statement_id=s.statement_id
       WHERE c.branch_code=$1 AND GREATEST(s.amount - COALESCE(paid.verified_paid, 0), 0) > 0
         AND (c.name ILIKE $2 OR c.account_no LIKE $2)
-      ORDER BY s.due_date, s.account_no LIMIT 20`, [req.user.branchCode, `%${req.query.q || ''}%`]);
+      ORDER BY s.due_date, s.account_no LIMIT $3 OFFSET $4`,
+    [req.user.branchCode, `%${req.query.q || ''}%`, page.limit, page.offset]);
   res.json(rows);
 });
 
 // GET /api/staff/payments?status=Pending
 router.get('/payments', async (req, res) => {
+  const page = pagination(req);
   const { rows } = await query(
-    `WITH ${ACCOUNT_SUMMARY_CTES}
+    `WITH ${ACCOUNT_SUMMARY_CTES_BY_BRANCH}
      SELECT p.*, c.name, summary.effective_status AS client_status,
             summary.previous_balance, summary.current_month_due, summary.total_balance
        FROM payments p JOIN clients c USING (account_no)
        JOIN account_summary summary USING (account_no)
       WHERE c.branch_code=$1 AND ($2::text IS NULL OR p.status=$2)
-      ORDER BY CASE WHEN p.status='Pending' THEN p.created_at END ASC, p.created_at DESC LIMIT 500`, [req.user.branchCode, req.query.status || null]);
+      ORDER BY CASE WHEN p.status='Pending' THEN p.created_at END ASC, p.created_at DESC, p.payment_id DESC
+      LIMIT $3 OFFSET $4`, [req.user.branchCode, req.query.status || null, page.limit, page.offset]);
   res.json(rows);
 });
 
@@ -323,7 +360,7 @@ router.post('/payments/cash', async (req, res) => {
   try {
     const out = await tx(async c => {
       const s = (await c.query(
-        `WITH ${ACCOUNT_SUMMARY_CTES}
+        `WITH ${buildAccountSummaryCtes('branch', 2)}
          SELECT s.*, summary.effective_status AS client_status,
                 summary.previous_balance, summary.current_month_due, summary.total_balance,
                 COALESCE(paid.verified_paid, 0) AS verified_paid,
@@ -403,6 +440,7 @@ router.patch('/payments/:id/reject', async (req, res) => {
 
 // GET /api/staff/cancellations ; PATCH /api/staff/cancellations/:id
 router.get('/cancellations', async (req, res) => {
+  const page = pagination(req);
   const { rows } = await query(
     `SELECT r.*, c.name FROM cancellation_requests r JOIN clients c USING (account_no)
       WHERE c.branch_code=$1 AND r.status='Pending'
@@ -412,7 +450,8 @@ router.get('/cancellations', async (req, res) => {
              AND h.new_status='Active'
              AND h.changed_at > r.created_at
         )
-      ORDER BY r.created_at DESC`, [req.user.branchCode]);
+      ORDER BY r.created_at DESC, r.request_id DESC LIMIT $2 OFFSET $3`,
+    [req.user.branchCode, page.limit, page.offset]);
   res.json(rows);
 });
 
@@ -456,9 +495,11 @@ router.patch('/cancellations/:id', async (req, res) => {
 
 // GET /api/staff/activity
 router.get('/activity', async (req, res) => {
+  const page = pagination(req, 200);
   const { rows } = await query(
     `SELECT * FROM activity_log WHERE branch_code=$1 AND logged_at >= now() - interval '6 months'
-      ORDER BY logged_at DESC LIMIT 200`, [req.user.branchCode]);
+      ORDER BY logged_at DESC, log_id DESC LIMIT $2 OFFSET $3`,
+    [req.user.branchCode, page.limit, page.offset]);
   res.json(rows);
 });
 

@@ -3,7 +3,7 @@
 var STAFF_PAGES = ["dash", "clients", "pay"];
 var STAFF_REQUESTS = [], ACTIVE_STAFF_PAGE = "dash";
 function showStaff(id) { ACTIVE_STAFF_PAGE = id; showSection(STAFF_PAGES, id, "nav-"); hideTip(); ({ dash: renderStaff, clients: renderClients, pay: renderStaff })[id](); }
-function myClients() { return getAllActiveClients().filter(function (c) { return c.branch == STAFF_BRANCH; }); }
+function myClients() { return getAllActiveClients(); }
 function myRequests(status) { return STAFF_REQUESTS.filter(function (r) { return r.status == status; }); }
 function onClientsChanged() { renderStaff(); }
 
@@ -14,12 +14,13 @@ function renderStaff() {
     "Under Review": Number(PAY.statusCounts.under_review || 0),
     Terminated: Number(PAY.statusCounts.terminated || 0)
   }, pend = PAY.queue;
-  var due = mine.filter(function (c) { return inBilling(c) && c.dueISO == APP_TODAY && c.balance > 0; }).length;
-  $("t-verify").textContent = pend.length; $("t-due").textContent = due; $("t-active").textContent = cnt.Active;
+  var due = Number(PAY.statusCounts.due_today || 0);
+  var queueLength = Number((PAY.metrics || {}).queue_length || pend.length);
+  $("t-verify").textContent = queueLength; $("t-due").textContent = due; $("t-active").textContent = cnt.Active;
   $("t-grace").textContent = cnt["Grace Period"]; $("t-review").textContent = cnt["Under Review"]; $("t-terminated").textContent = cnt.Terminated;
   $("t-collected").innerHTML = peso(Number(PAY.statusCounts.collected_this_month || 0));
   /* payments to verify */
-  $("dash-queue").innerHTML = !PAY.loaded ? "<p class='empty'>" + esc(PAY.error || "Loading the queue...") + "</p>" : pend.length ? headCard(pend[0]) + (pend.length > 1 ? "<p class='muted' style='margin:8px 6px 0'>+ " + (pend.length - 1) + " waiting in queue (locked until Queue #1 is done). <a style='color:#2b86ff;cursor:pointer' onclick='showStaff(\"pay\")'>Open the queue</a></p>" : "") : "<p class='empty'>No pending payments in the verification queue.</p>";
+  $("dash-queue").innerHTML = !PAY.loaded ? "<p class='empty'>" + esc(PAY.error || "Loading the queue...") + "</p>" : queueLength ? headCard(pend[0]) + (queueLength > 1 ? "<p class='muted' style='margin:8px 6px 0'>+ " + (queueLength - 1) + " waiting in queue (locked until Queue #1 is done). <a style='color:#2b86ff;cursor:pointer' onclick='showStaff(\"pay\")'>Open the queue</a></p>" : "") : "<p class='empty'>No pending payments in the verification queue.</p>";
   /* clients needing attention first */
   var rank = { "Grace Period": 0, "Under Review": 1, "Active": 2, "Terminated": 3 };
   var top = mine.slice().sort(function (a, b) { return rank[a.status] - rank[b.status] || (a.balance > 0 ? 0 : 1) - (b.balance > 0 ? 0 : 1); }).slice(0, 6);

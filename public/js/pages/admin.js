@@ -7,6 +7,9 @@ var LIVE = {
   clients: [],
   statements: [],
   payments: [],
+  latestStatementByAccount: Object.create(null),
+  verifiedPaidByStatement: Object.create(null),
+  pendingByStatement: Object.create(null),
   notices: [],
   passwordResetRequests: [],
   months: [],
@@ -89,16 +92,28 @@ async function adminApi(path, opts) {
   return data;
 }
 
+async function adminApiAllPages(path, pageSize) {
+  var size = pageSize || 500, offset = 0, all = [];
+  while (true) {
+    var separator = path.indexOf("?") >= 0 ? "&" : "?";
+    var rows = await adminApi(path + separator + "limit=" + size + "&offset=" + offset);
+    if (!Array.isArray(rows)) throw new Error("The paginated Admin API response was not a list.");
+    all = all.concat(rows);
+    if (rows.length < size) return all;
+    offset += rows.length;
+  }
+}
+
 async function syncAdminData() {
   var results;
   try {
     results = await Promise.all([
-      adminApi("/clients"),
-      adminApi("/statements"),
-      adminApi("/payments"),
-      adminApi("/notices"),
+      adminApiAllPages("/clients"),
+      adminApiAllPages("/statements"),
+      adminApiAllPages("/payments"),
+      adminApiAllPages("/notices"),
       adminApi("/months"),
-      adminApi("/password-reset-requests")
+      adminApiAllPages("/password-reset-requests")
     ]);
   } catch (e) {
     LIVE.loadError = "Could not load records. Please check your connection and retry.";
@@ -175,6 +190,15 @@ async function syncAdminData() {
       send: s.send_status || "Not Yet Sent"
     };
   });
+  LIVE.latestStatementByAccount = Object.create(null);
+  LIVE.statements.forEach(function (statement) {
+    if (statement.month > manilaMonthKey()) return;
+    var previous = LIVE.latestStatementByAccount[statement.acc];
+    if (!previous || statement.month > previous.month ||
+        (statement.month === previous.month && statement.due > previous.due)) {
+      LIVE.latestStatementByAccount[statement.acc] = statement;
+    }
+  });
 
   LIVE.payments = results[2].map(function (p, idx) {
     var dt = String(p.payment_date || p.created_at || "").slice(0, 10);
@@ -194,6 +218,16 @@ async function syncAdminData() {
       or: p.or_no || p.official_receipt || "",
       status: p.status || "—"
     };
+  });
+  LIVE.verifiedPaidByStatement = Object.create(null);
+  LIVE.pendingByStatement = Object.create(null);
+  LIVE.payments.forEach(function (payment) {
+    var key = String(payment.statement_id);
+    if (payment.status === "Verified") {
+      LIVE.verifiedPaidByStatement[key] = (LIVE.verifiedPaidByStatement[key] || 0) + payment.amount;
+    } else if (payment.status === "Pending") {
+      LIVE.pendingByStatement[key] = true;
+    }
   });
 
   LIVE.notices = results[3].map(function (n) {
@@ -358,7 +392,7 @@ async function refreshAdminCancellations(force) {
   var branchCode = branch ? branchCodeForName(branch) : "";
   var path = "/cancellations" + (branchCode ? "?branch=" + encodeURIComponent(branchCode) : "");
   try {
-    var rows = await adminApi(path);
+    var rows = await adminApiAllPages(path);
     if (request !== ADMIN_CANCEL_REQUEST || (!force && liveRefreshPaused())) return;
     var pending = rows.filter(function (r) { return r.status === "Pending"; });
     var signature = JSON.stringify(pending);
