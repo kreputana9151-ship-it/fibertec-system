@@ -21,7 +21,28 @@ function pill(l, id) { return "<span class='c-pill " + pillClass(l) + "'" + (id 
 function canPayNow() {
   return STM.length > 0 && cur().balance > 0 && !ME.hasPending;
 }
-function nextDueISO() { return STM.length ? cur().due : todayISO(); }
+
+function addMonthsClampISO(baseISO, monthsToAdd, targetDay) {
+  var parts = String(baseISO || todayISO()).slice(0, 10).split("-").map(Number);
+  var y = parts[0], m = parts[1] - 1 + monthsToAdd;
+  var target = new Date(Date.UTC(y, m, 1));
+  var lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  var day = Math.min(Number(targetDay || parts[2] || 1), lastDay);
+  return new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), day)).toISOString().slice(0, 10);
+}
+
+function nextDueISO() {
+  var s = cur();
+  if (STM.length && s.balance > 0) return s.due;
+  var anchor = (STM.length && s.due) ? s.due : (ME.installed || todayISO());
+  var dueDay = ME.due || Number(String(anchor).slice(8, 10)) || 15;
+  var candidate = addMonthsClampISO(anchor, 1, dueDay);
+  var today = todayISO();
+  while (candidate <= today) {
+    candidate = addMonthsClampISO(candidate, 1, dueDay);
+  }
+  return candidate;
+}
 
 function myHistory() {
   return PAYS.map(function (r) { return { method: r.method, type: r.payment_type, ref: r.reference_no ? fmtRef(r.reference_no) : "", or: r.or_no || "", date: "Submitted " + fmtD(r.payment_date, 1), amount: r.amount, status: r.status == "Verified" ? "Paid" : r.status == "Pending" ? "Awaiting verification" : "Rejected" }; });
@@ -38,7 +59,7 @@ function toggleBell() { $("bell").classList.toggle("hidden"); }
 /* cancellation banner + button state */
 function cancelState() {
   var r = ME.cancel;
-  if (ME.status == "Terminated") return { banner: "<div class='c-banner red'><b>Your account has been terminated.</b> You may settle your remaining balance online or at your branch to restore your Active connection.</div>", can: false };
+  if (ME.status == "Terminated") return { banner: ME.totalBalance > 0 ? "<div class='c-banner red'><b>Your account has been terminated.</b> You may settle your remaining balance online or at your branch to restore your Active connection.</div>" : "<div class='c-banner red'><b>Your account has been terminated.</b> Please contact your branch if you want to be reconnected.</div>", can: false };
   if (ME.status == "Under Review" && ME.reason == "Client Cancellation Request") return { banner: "<div class='c-banner blue'><b>Cancellation approved by branch staff.</b> Your request is now under review by the Administrator. We will notify you once it is final.</div>", can: false };
   if (r && r.status == "Pending") return { banner: "<div class='c-banner amber'><b>Cancellation request sent</b> on " + fmtD(r.request_date) + ". Branch staff are reviewing it.</div>", can: false, pending: true };
   if (r && r.status == "Rejected") return { banner: "<div class='c-banner blue'><b>Your cancellation request was declined</b> by branch staff. Your connection stays active. You may submit a new request.</div>", can: true };
@@ -51,12 +72,17 @@ function cancelBtn() { var st = cancelState(); return st.can || st.pending ? "<b
 function renderClient() {
   if (!ME) return;
   var s = cur(), label = inBillingNow() ? cycleLabel(s) : ME.status, nextDue = nextDueISO(), st = cancelState();
+  var hasUnpaid = STM.length > 0 && s.balance > 0;
+  var dueCardDate = hasUnpaid ? s.due : nextDue;
+  var dueCardSub = hasUnpaid ? ("balance " + peso(s.balance)) : ("Your next month bill is " + peso(ME.rate));
+  var daysLeft = Math.max(0, dayDiff(nextDue, todayISO()));
+
   $("c-banner").innerHTML = st.banner; $("c-name").innerHTML = esc(ME.name.toUpperCase()); $("c-av").innerHTML = initials(ME.name); $("c-welcome").innerHTML = "WELCOME " + esc(ME.name.toUpperCase());
   var mbps = (ME.plan.match(/\d+(?=\s*Mbps)/) || ["0"])[0], pn = ME.plan.replace(/\s*\d+\s*Mbps/, "").trim();
   $("c-cards").innerHTML = "<div class='c-card'><p class='c-lab'>SUBSCRIPTION</p><p class='c-big'>" + mbps + " Mbps</p><p class='c-sub'><b>" + esc(pn) + " " + mbps + "</b> &middot; <b>" + peso(ME.rate) + "/month</b></p></div>" +
     "<div class='c-card'><p class='c-lab'>CURRENT BALANCE</p><p class='c-big'>" + peso(ME.totalBalance) + "</p>" + pill(label) + "</div>" +
-    "<div class='c-card'><p class='c-lab'>DUE DATE</p><p class='c-big' style='font-size:32px;margin-top:16px'>" + fmtD(s.due) + "</p><p class='c-sub'>balance " + peso(s.balance) + "</p></div>" +
-    "<div class='c-card'><p class='c-lab'>DAYS LEFT IN CYCLE</p><p class='c-big'>" + dayDiff(nextDue, todayISO()) + "</p><p class='c-sub'>Next statement " + fmtD(nextDue) + ". Billing follows your anniversary date</p></div>";
+    "<div class='c-card'><p class='c-lab'>DUE DATE</p><p class='c-big' style='font-size:32px;margin-top:16px'>" + fmtD(dueCardDate) + "</p><p class='c-sub'>" + dueCardSub + "</p></div>" +
+    "<div class='c-card'><p class='c-lab'>DAYS LEFT IN CYCLE</p><p class='c-big'>" + daysLeft + "</p><p class='c-sub'>Next statement " + fmtD(nextDue) + ". Billing follows your anniversary date</p></div>";
   $("c-acct").innerHTML = "<h3>Your Account</h3><div class='c-kv'><b>Account no.</b><span>" + ME.no + "</span></div><div class='c-kv'><b>Address</b><span>" + esc(ME.address) + "</span></div><div class='c-kv'><b>Branch</b><span>" + esc(ME.branch) + "</span></div><div class='c-kv'><b>Installed</b><span>" + fmtD(ME.installed) + "</span></div><div class='c-kv'><b>Device location</b><span>" + esc(ME.device) + "</span></div><div class='c-kv'><b>Email</b><span>" + esc(ME.email) + "</span></div>" +
     "<div class='c-btns'><button class='c-btn' onclick='showPage(\"payment\")'>Pay now</button><button class='c-btn' onclick='showPage(\"statement\")'>View statements</button>" + cancelBtn() + "</div>";
   var h = myHistory(); $("recent").innerHTML = histRows(h.slice(0, 4)); $("history").innerHTML = histRows(h);
