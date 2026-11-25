@@ -71,7 +71,7 @@ function getAllActiveClients() {
         status: c.status,
         due: Number(c.due_day || 0),
         dueISO: (liveBill && liveBill.dueISO) ? liveBill.dueISO : (c.current_due_date || ""),
-        pay: c.payment_status || (balance > 0 ? "Unpaid" : (liveBill ? liveBill.pay : "—")),
+        pay: liveBill ? liveBill.pay : (balance > 0 ? "Unpaid" : "—"),
         balance: balance,
         graceEnd: graceEnd,
         graceLeft: graceLeft,
@@ -122,6 +122,8 @@ async function syncStaffClients(silent) {
         graceLeft = Math.max(0, Math.ceil(diffMs / 86400000));
       }
       var outstanding = r.outstanding_balance != null ? Number(r.outstanding_balance) : Number(r.current_balance || 0);
+      var rawPay = String(r.payment_status || "").trim();
+      var normalizedPay = (outstanding <= 0 && (!rawPay || rawPay === "Unpaid" || rawPay === "—")) ? "—" : (rawPay || (outstanding > 0 ? "Unpaid" : "—"));
       return {
         no: r.account_no,
         name: r.name,
@@ -134,7 +136,7 @@ async function syncStaffClients(silent) {
         status: r.status || "Active",
         due: Number(r.due_day || 0),
         dueISO: r.current_due_date || "",
-        pay: r.payment_status || (outstanding > 0 ? "Unpaid" : "—"),
+        pay: normalizedPay,
         graceEnd: graceEnd,
         graceLeft: graceLeft,
         reason: r.status_reason || (r.status == "Under Review"
@@ -390,11 +392,11 @@ function viewClient(no) {
   if (c.status == "Under Review") extra = "<div class='cd-note'><div class='warn amber'><b>Under Review</b> &middot; " + esc(c.reason) + (c.flagged ? " &middot; flagged " + safeFmtD(c.flagged) : "") + (isAdmin() ? "" : ". Waiting for an administrator's decision.") + "</div></div>";
   if (c.status == "Terminated") extra = "<div class='cd-note'><div class='warn red'><b>Terminated</b>" + (c.termDate ? " on " + safeFmtD(c.termDate) : "") + " &middot; " + esc(c.termReason || "Non-Payment") + "</div></div>";
   if (c.status == "Grace Period") extra = "<div class='cd-note'><div class='warn amber'><b>Grace period</b>" + (c.graceEnd ? " ends " + safeFmtD(c.graceEnd) : "") + " (" + c.graceLeft + " day" + (c.graceLeft == 1 ? "" : "s") + " left)</div></div>";
-  modal2("<div class='cd-hero'><span class='avatar'>" + initials(c.name) + "</span><div><h2>" + esc(c.name) + "</h2><small>Account " + c.no + " &middot; " + esc(c.branch) + " Branch</small><div style='margin-top:8px'>" + badgeFor(c.status) + "</div></div>" +
+  modal2("<div class='cd-hero' style='position:relative;padding-right:48px'><span class='avatar'>" + initials(c.name) + "</span><div><h2>" + esc(c.name) + "</h2><small>Account " + c.no + " &middot; " + esc(c.branch) + " Branch</small><div style='margin-top:8px'>" + badgeFor(c.status) + "</div></div>" +
     (isAdmin() ? "<div class='cd-hero-actions'><button class='btn btn-light' onclick='editClient(\"" + c.no + "\")'>Edit Client</button><button class='btn btn-light' onclick='resetClientPassword(\"" + c.no + "\")'>Reset Client Password</button></div>" : "") +
-    "<button class='x dlg-x' style='background:none;border:0;color:#fff;font-size:28px;cursor:pointer' onclick='closeModal()'>&times;</button></div>" +
+    "<button class='x dlg-x' style='position:absolute;top:16px;right:18px;background:none;border:0;color:#fff;font-size:28px;line-height:1;cursor:pointer' onclick='closeModal()'>&times;</button></div>" +
     "<div class='cd-stats'><div class='cd-stat'><small>Plan</small><b>" + esc(c.plan.replace(/\s*Mbps/, " Mbps")) + "</b></div><div class='cd-stat'><small>Monthly rate</small><b>" + peso(c.rate) + "</b></div><div class='cd-stat'><small>Payment status</small><b>" + esc(c.pay || "—") + "</b></div><div class='cd-stat'><small>Balance</small><b>" + peso(c.balance || 0) + "</b></div></div>" + (extra ? "<div style='height:14px'></div>" + extra : "") +
-    "<div class='cd-grid'><div class='cd-sec'><h4>Records</h4>" + kv("Branch", esc(c.branch) + " Branch") + kv("Plan", "FiberTec " + esc(c.plan)) + kv("Installed date", safeFmtD(c.installed)) + kv("Monthly rate", peso(c.rate)) + kv("Payment due date", "Every " + ordinal(c.due || 15)) + "</div>" +
+    "<div class='cd-grid'><div class='cd-sec'><h4>Records</h4>" + kv("Branch", esc(c.branch) + " Branch") + kv("Plan", "FiberTec " + esc(c.plan)) + kv("Installed date", safeFmtD(c.installed)) + kv("Monthly rate", peso(c.rate)) + kv("Payment due date", c.dueISO ? safeFmtD(c.dueISO, 1) : "—") + "</div>" +
     "<div class='cd-sec'><h4>Address and contact</h4>" + kv("Address", esc(c.address || "—")) + kv("Contact no.", esc(c.contact || "—")) + kv("Email", esc(c.email || "—")) + kv("FB / Messenger", esc(c.fb || "—")) + "</div>" +
     "<div class='cd-sec'><h4>Current statement</h4>" + kv("Invoice no.", esc(s.inv)) + kv("Issued date", safeFmtD(s.bill)) + kv("Due date", safeFmtD(s.due)) + kv("Paid / due", peso(s.paid) + " / " + peso(s.amount)) + "</div>" +
     "<div class='cd-sec'><h4>Connection device location</h4><p style='margin:6px 0 0'>" + esc(deviceLocation) + "</p></div></div>" +
