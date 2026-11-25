@@ -84,7 +84,16 @@ account_summary AS (
          latest.due_date AS latest_due_date,
          latest.balance AS latest_statement_balance,
          latest.payment_status AS latest_payment_status,
-         current_cycle.due_date AS current_due_date,
+         COALESCE(
+           current_cycle.due_date,
+           (
+             (date_trunc('month', GREATEST(c.installed_date, clock.today))::date + INTERVAL '1 month')::date
+             + LEAST(
+                 c.due_day::int,
+                 EXTRACT(DAY FROM (date_trunc('month', GREATEST(c.installed_date, clock.today))::date + INTERVAL '2 months - 1 day'))::int
+               ) - 1
+           )::date
+         ) AS current_due_date,
          open_cycle.due_date AS overdue_due_date,
          CASE
            WHEN COALESCE(t.total_balance, 0) = 0 AND c.status <> 'Terminated' THEN 'Active'

@@ -70,7 +70,7 @@ function getAllActiveClients() {
         rate: Number(c.rate || 0),
         status: c.status,
         due: Number(c.due_day || 0),
-        dueISO: liveBill ? liveBill.dueISO : (c.current_due_date || ""),
+        dueISO: (liveBill && liveBill.dueISO) ? liveBill.dueISO : (c.current_due_date || ""),
         pay: c.payment_status || (balance > 0 ? "Unpaid" : (liveBill ? liveBill.pay : "—")),
         balance: balance,
         graceEnd: graceEnd,
@@ -191,7 +191,7 @@ function clientCols(tab) {
   var act = isAdmin(), take = function (c) { return "<button class='action review' onclick='event.stopPropagation();reviewClient(\"" + c.no + "\")'>Take Action</button>"; };
   var cols = {
     "All": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Contact No.", function (c) { return esc(c.contact || "—"); }], ["Email", function (c) { return esc(c.email || "—"); }], ["Branch", function (c) { return esc(c.branch); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Status", function (c) { return badgeFor(c.status); }]],
-    "Active": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Branch", function (c) { return esc(c.branch); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Monthly Rate", function (c) { return peso(c.rate); }], ["Due Date", function (c) { return c.dueISO ? safeFmtD(c.dueISO, 1) : ("Every " + ordinal(c.due || 15)); }], ["Payment Status", function (c) { return badgeFor(c.pay || "—"); }]],
+    "Active": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Branch", function (c) { return esc(c.branch); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Monthly Rate", function (c) { return peso(c.rate); }], ["Due Date", function (c) { return c.dueISO ? safeFmtD(c.dueISO, 1) : "—"; }], ["Payment Status", function (c) { return badgeFor(c.pay || "—"); }]],
     "Grace Period": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Monthly Rate", function (c) { return peso(c.rate); }], ["Outstanding Balance", function (c) { return peso(c.balance); }], ["Grace Period Ends", function (c) { return safeFmtD(c.graceEnd); }], ["Days Remaining", function (c) { return "<b>" + c.graceLeft + " Day" + (c.graceLeft == 1 ? "" : "s") + " Left</b>"; }]],
     "Under Review": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Branch", function (c) { return esc(c.branch); }], ["Outstanding Balance", function (c) { return peso(c.balance); }], ["Reason", function (c) { return esc(c.reason); }], ["Date Flagged", function (c) { return safeFmtD(c.flagged); }]],
     "Terminated": [["Account No.", function (c) { return c.no; }], ["Client Name", function (c) { return esc(c.name); }], ["Internet Plan", function (c) { return esc(c.plan); }], ["Outstanding Balance", function (c) { return peso(c.balance); }], ["Termination Date", function (c) { return safeFmtD(c.termDate); }], ["Payment Status", function (c) { return badgeFor(c.pay || "—"); }]]
