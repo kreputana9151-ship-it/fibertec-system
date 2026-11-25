@@ -219,7 +219,9 @@ router.post('/clients', wrap(async (req, res) => {
       await createInitialStatement(c, {
         accountNo,
         shortName: billing.short_name,
-        installedDate
+        installedDate,
+        staffUserId: req.user.userId,
+        branchCode: req.user.branchCode
       });
 
       const welcomeMsg = `Welcome to FiberTec IT Solutions, ${name}! Your Account No. is ${accountNo}. Use your registered email (${email}) or Account No. (${accountNo}) and your assigned password to sign in to the FiberTec Client Portal.`;

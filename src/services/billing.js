@@ -65,10 +65,44 @@ async function insertStatement(c, { accountNo, shortName, issuedDate, dueDate })
   return result.rowCount > 0;
 }
 
-async function createInitialStatement(c, { accountNo, shortName, installedDate }) {
+async function createInitialStatement(c, { accountNo, shortName, installedDate, staffUserId, branchCode }) {
   const issuedDate = dateOnly(installedDate);
   const todayDate = manilaDate(new Date());
   if (issuedDate > todayDate) return false;
+
+  // Create the initial installation/subscription statement (paid upon registration)
+  const initStmt = await c.query(
+    `INSERT INTO statements (invoice_no, account_no, billing_month, issued_date, due_date, amount, amount_paid, balance, payment_status, send_status, sent_at)
+     SELECT $1, $2, $3::date, $4::date, $4::date, p.monthly_rate, p.monthly_rate, 0, 'Paid', 'Delivered', now()
+       FROM clients cl JOIN plans p USING (plan_id)
+      WHERE cl.account_no=$2
+     ON CONFLICT (account_no, billing_month) DO NOTHING
+     RETURNING statement_id, amount`,
+    [invoiceNo(shortName, issuedDate, accountNo), accountNo, monthStart(issuedDate), issuedDate]
+  );
+
+  if (initStmt.rowCount > 0) {
+    const stmt = initStmt.rows[0];
+    const orNo = await nextOfficialReceipt(c);
+    await c.query(
+      `INSERT INTO payments (statement_id, account_no, amount, method, payment_type, payment_date, status, or_no, verified_by_staff, verified_at)
+       VALUES ($1, $2, $3, 'Cash', 'Full payment', $4::date, 'Verified', $5, $6, now())`,
+      [stmt.statement_id, accountNo, stmt.amount, issuedDate, orNo, staffUserId || null]
+    );
+    await addNotice(c, {
+      accountNo,
+      statementId: stmt.statement_id,
+      type: 'Payment Receipt',
+      channel: 'Portal Notification',
+      status: 'Sent',
+      message: `Initial subscription payment of PHP ${Number(stmt.amount).toFixed(2)} received upon registration (O.R. ${orNo}). Thank you!`
+    });
+    if (staffUserId && branchCode) {
+      await logActivity(c, staffUserId, branchCode, `Recorded initial Cash payment ${orNo} for ${accountNo}`);
+    }
+    return true;
+  }
+
   const dueDate = anniversaryDate(installedDate, 1);
   if (!isInBillingWindow(dueDate, todayDate)) return false;
   return insertStatement(c, { accountNo, shortName, issuedDate, dueDate });
